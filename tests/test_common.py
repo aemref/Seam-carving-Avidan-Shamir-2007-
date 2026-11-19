@@ -1,5 +1,7 @@
 """Tests for experiments.common, run against small files in a temporary folder."""
 
+import cv2
+import numpy as np
 import pytest
 
 from experiments import common
@@ -24,6 +26,24 @@ def touch(folder, *names):
     folder.mkdir(parents=True, exist_ok=True)
     for name in names:
         (folder / name).write_bytes(b"")
+
+
+def write_image(path, img, ext=".png"):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    ok, buf = cv2.imencode(ext, img)
+    assert ok
+    buf.tofile(path)
+
+
+@pytest.fixture
+def no_path_io(monkeypatch):
+    """Fail if cv2.imread / cv2.imwrite are used: they break on non-ASCII paths on Windows."""
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("use np.fromfile + cv2.imdecode / cv2.imencode + tofile")
+
+    monkeypatch.setattr(cv2, "imread", forbidden)
+    monkeypatch.setattr(cv2, "imwrite", forbidden)
 
 
 # --- list_images -------------------------------------------------------------
@@ -96,3 +116,54 @@ def test_list_images_reads_dir_at_call_time(dirs, tmp_path, monkeypatch):
     touch(other, "insan_01_berkay.jpg")
     monkeypatch.setattr(common, "IMAGES_DIR", other)
     assert common.list_images() == [other / "insan_01_berkay.jpg"]
+
+
+# --- load_image --------------------------------------------------------------
+
+
+def test_load_image_roundtrip_non_ascii_path(dirs, no_path_io):
+    rng = np.random.default_rng(0)
+    img = rng.integers(0, 256, size=(5, 7, 3), dtype=np.uint8)
+    path = dirs["IMAGES_DIR"] / "nesne_01_emre_ğüşiöç.png"
+    write_image(path, img)
+    for arg in (path, str(path)):
+        out = common.load_image(arg)
+        assert out.dtype == np.uint8
+        assert out.shape == (5, 7, 3)
+        np.testing.assert_array_equal(out, img)
+
+
+def test_load_image_bgr_channel_order(dirs):
+    img = np.zeros((2, 3, 3), dtype=np.uint8)
+    img[..., 2] = 255  # pure red in BGR
+    path = dirs["IMAGES_DIR"] / "red.png"
+    write_image(path, img)
+    np.testing.assert_array_equal(common.load_image(path), img)
+
+
+def test_load_image_jpeg_and_gray(dirs):
+    gray = np.arange(4 * 6, dtype=np.uint8).reshape(4, 6) * 10
+    jpg = dirs["IMAGES_DIR"] / "manzara_01_emre.jpg"
+    write_image(jpg, np.dstack([gray] * 3), ext=".jpg")
+    out = common.load_image(jpg)
+    assert out.dtype == np.uint8 and out.shape == (4, 6, 3)
+    png = dirs["IMAGES_DIR"] / "gray.png"
+    write_image(png, gray)
+    out = common.load_image(png)
+    assert out.shape == (4, 6, 3)
+    for ch in range(3):
+        np.testing.assert_array_equal(out[..., ch], gray)
+
+
+def test_load_image_errors(dirs):
+    images = dirs["IMAGES_DIR"]
+    with pytest.raises(FileNotFoundError):
+        common.load_image(images / "missing.jpg")
+    touch(images, "empty.jpg")
+    with pytest.raises(ValueError, match="decode"):
+        common.load_image(images / "empty.jpg")
+    (images / "broken.jpg").write_bytes(b"not an image at all")
+    with pytest.raises(ValueError, match="decode"):
+        common.load_image(images / "broken.jpg")
+    with pytest.raises(FileNotFoundError):
+        common.load_image(images)

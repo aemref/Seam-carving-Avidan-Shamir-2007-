@@ -8,6 +8,7 @@ import re
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -52,9 +53,30 @@ def list_images(category: str | None = None, person: str | None = None) -> list[
     return sorted(found, key=lambda p: p.name)
 
 
+def _decode(path: str | Path, flags: int) -> np.ndarray:
+    """Read and decode an image file with OpenCV.
+
+    ``cv2.imread`` fails silently on non-ASCII paths on Windows ("Masaüstü"), so the bytes
+    are read by NumPy and decoded in memory. Raises ``FileNotFoundError`` for a missing
+    file and ``ValueError`` when OpenCV cannot decode it (``cv2.imread`` would return None).
+    """
+    path = Path(path)
+    if not path.is_file():
+        raise FileNotFoundError(f"image file not found: {path}")
+    data = np.fromfile(path, dtype=np.uint8)
+    img = cv2.imdecode(data, flags) if data.size else None
+    if img is None:
+        raise ValueError(f"cannot decode image file: {path}")
+    return img
+
+
 def load_image(path: str | Path) -> np.ndarray:
-    """Read an image as BGR uint8."""
-    raise NotImplementedError
+    """Read an image file as BGR uint8 ``(H, W, 3)``; grayscale files get three equal channels.
+
+    Works with non-ASCII paths on every platform. Raises ``FileNotFoundError`` if the file
+    does not exist and ``ValueError`` if it cannot be decoded.
+    """
+    return _decode(path, cv2.IMREAD_COLOR)
 
 
 def load_mask(image_path: str | Path, kind: str = "remove") -> np.ndarray | None:
