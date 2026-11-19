@@ -90,8 +90,14 @@ def _validated_mask(mask: np.ndarray, expected_shape: tuple[int, ...]) -> np.nda
 
 
 def seams_needed(mask: np.ndarray) -> tuple[int, int]:
-    """Return (number of vertical seams, number of horizontal seams) needed to clear the mask."""
-    raise NotImplementedError
+    """Return how many seams remove every pixel of an (H, W) bool mask in each direction.
+
+    Returns (vertical, horizontal): the mask pixel count of the most crowded row and of the
+    most crowded column. An empty mask gives (0, 0).
+    """
+    pixels_per_row = np.count_nonzero(mask, axis=1)
+    pixels_per_col = np.count_nonzero(mask, axis=0)
+    return int(np.max(pixels_per_row, initial=0)), int(np.max(pixels_per_col, initial=0))
 
 
 def remove_object(

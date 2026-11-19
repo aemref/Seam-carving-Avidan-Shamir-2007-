@@ -5,7 +5,7 @@ from collections.abc import Iterator
 import numpy as np
 import pytest
 
-from seamcarving.object_removal import apply_mask_weights
+from seamcarving.object_removal import apply_mask_weights, seams_needed
 
 # Small hand-built energy map with negative values; max|e| = 5.
 ENERGY = np.array(
@@ -175,3 +175,42 @@ def test_non_finite_energy_raises_value_error(non_finite_value):
 
     with pytest.raises(ValueError, match="inf or nan"):
         apply_mask_weights(energy, remove_mask=mask_from_pixels(REMOVAL_PIXELS))
+
+
+MASK_SHAPE = (6, 8)
+
+
+def rectangle_mask(n_rows: int, n_cols: int) -> np.ndarray:
+    mask = np.zeros(MASK_SHAPE, dtype=bool)
+    mask[1 : 1 + n_rows, 2 : 2 + n_cols] = True
+    return mask
+
+
+@pytest.mark.parametrize(
+    ("rect_rows", "rect_cols"),
+    [(2, 5), (4, 1), (1, 1)],
+    ids=["wide_flat", "narrow_tall", "single_pixel"],
+)
+def test_seams_needed_counts_most_crowded_row_and_column(rect_rows, rect_cols):
+    mask = rectangle_mask(rect_rows, rect_cols)
+
+    n_vertical, n_horizontal = seams_needed(mask)
+
+    assert (n_vertical, n_horizontal) == (rect_cols, rect_rows)
+
+
+def test_seams_needed_uses_most_crowded_line_of_irregular_mask():
+    mask = mask_from_pixels(REMOVAL_PIXELS)
+
+    assert seams_needed(mask) == (2, 3)
+
+
+def test_seams_needed_for_empty_mask_is_zero():
+    assert seams_needed(np.zeros(MASK_SHAPE, dtype=bool)) == (0, 0)
+
+
+def test_seams_needed_returns_python_ints():
+    n_vertical, n_horizontal = seams_needed(rectangle_mask(2, 5))
+
+    assert type(n_vertical) is int
+    assert type(n_horizontal) is int
