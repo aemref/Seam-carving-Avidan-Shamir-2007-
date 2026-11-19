@@ -70,13 +70,28 @@ def cumulative_map(energy: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 def find_vertical_seam(energy: np.ndarray) -> np.ndarray:
     """Find the minimum-cost vertical seam.
 
+    Builds ``M`` and ``back`` with :func:`cumulative_map`, starts at the smallest value of the
+    last row and walks up the rows following the stored parent offsets.
+
     Args:
-        energy: (H, W) float64.
+        energy: (H, W) energy map, same rules as :func:`cumulative_map` (any real dtype,
+            negative and large values allowed, input not modified).
 
     Returns:
-        (H,) int64 with ``|seam[r] - seam[r-1]| <= 1``; ties resolve to the leftmost column.
+        (H,) int64, ``seam[r]`` is the column chosen in row ``r``;
+        ``|seam[r] - seam[r-1]| <= 1``. Ties resolve to the leftmost column, so the result is
+        deterministic (a constant map gives column 0 in every row).
     """
-    raise NotImplementedError
+    M, back = cumulative_map(energy)
+    n_rows = M.shape[0]
+    seam = np.empty(n_rows, dtype=np.int64)
+    c = int(np.argmin(M[-1]))  # first minimum = leftmost end column
+    seam[-1] = c
+    for r in range(n_rows - 1, 0, -1):
+        # int(...) matters: adding an int8 to a large column index overflows in NumPy 2.
+        c += int(back[r, c])
+        seam[r - 1] = c
+    return seam
 
 
 def seam_cost(energy: np.ndarray, seam: np.ndarray) -> float:

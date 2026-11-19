@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from seamcarving.seam import cumulative_map
+from seamcarving.seam import cumulative_map, find_vertical_seam
 
 # Hand-computed example. Worked by hand:
 #   M row 1: 2+min(inf,1,4)=3   8+min(1,4,3)=9    1+min(4,3,5)=4    6+min(3,5,inf)=9
@@ -119,3 +119,96 @@ def test_cumulative_map_edge_shapes(shape):
 def test_cumulative_map_rejects_bad_input(bad):
     with pytest.raises(ValueError):
         cumulative_map(bad)
+
+
+# --- find_vertical_seam -------------------------------------------------------------------
+
+
+def test_find_vertical_seam_hand_example():
+    energy = HAND_ENERGY.copy()
+    seam = find_vertical_seam(energy)
+    assert seam.dtype == np.int64 and seam.shape == (4,)
+    np.testing.assert_array_equal(seam, [2, 2, 3, 3])
+    np.testing.assert_array_equal(energy, HAND_ENERGY)  # input unchanged
+
+
+def test_find_vertical_seam_constant_map_is_column_zero():
+    for value in (0.0, 7.5, -3.0):
+        seam = find_vertical_seam(np.full((6, 9), value))
+        np.testing.assert_array_equal(seam, np.zeros(6, dtype=np.int64))
+
+
+def test_find_vertical_seam_parent_ties_go_left():
+    # Last row: column 1 is the unique minimum. Its parents tie between offsets -1 and 0
+    # (first map) and between 0 and +1 (second map); the leftmost parent must win.
+    np.testing.assert_array_equal(find_vertical_seam([[0, 0, 5], [9, 0, 9]]), [0, 1])
+    np.testing.assert_array_equal(find_vertical_seam([[5, 0, 0], [9, 0, 9]]), [1, 1])
+
+
+def test_find_vertical_seam_shift_invariant():
+    rng = np.random.default_rng(0)
+    for _ in range(20):
+        energy = rng.integers(0, 50, size=(12, 10)).astype(np.float64)
+        seam = find_vertical_seam(energy)
+        for shift in (-1000.0, -1.0, 1.0, 1e6):
+            np.testing.assert_array_equal(find_vertical_seam(energy + shift), seam)
+
+
+def test_find_vertical_seam_goes_through_large_negative_region():
+    rng = np.random.default_rng(0)
+    energy = rng.uniform(0, 255, size=(30, 40))
+    energy[10:20, 31:33] = -1e7  # object to remove
+    seam = find_vertical_seam(energy)
+    assert np.all((seam[10:20] >= 31) & (seam[10:20] <= 32))
+
+
+def test_find_vertical_seam_avoids_large_positive_region():
+    # Mask weights as in object removal: -R inside the removal mask, +P on the protected
+    # region, of order H**2 * 1000. Every seam that reaches the removal region from the
+    # top must not cross the protected band next to it.
+    rng = np.random.default_rng(0)
+    n_rows = 40
+    weight = n_rows**2 * 1000.0
+    energy = rng.uniform(0, 255, size=(n_rows, 50))
+    energy[:, 20:25] += weight  # protected vertical band
+    energy[15:25, 30:33] -= weight  # removal region right of the band
+    M, _ = cumulative_map(energy)
+    assert np.isfinite(M).all()
+    seam = find_vertical_seam(energy)
+    assert np.all((seam < 20) | (seam >= 25))  # never touches the protected band
+    assert np.all((seam[15:25] >= 30) & (seam[15:25] <= 32))
+
+
+def test_find_vertical_seam_wide_map_column_above_int8_range():
+    # The cheapest path sits at column 250; backtracking adds int8 offsets to it.
+    energy = np.ones((20, 300))
+    path = 250 + np.round(3 * np.sin(np.arange(20) / 3)).astype(np.int64)
+    energy[np.arange(20), path] = 0.0
+    np.testing.assert_array_equal(find_vertical_seam(energy), path)
+
+
+@pytest.mark.parametrize("shape", [(5, 1), (5, 2), (1, 6), (1, 1)])
+def test_find_vertical_seam_edge_shapes(shape):
+    rng = np.random.default_rng(0)
+    energy = rng.integers(-9, 10, size=shape).astype(np.float64)
+    seam = find_vertical_seam(energy)
+    assert seam.dtype == np.int64 and seam.shape == (shape[0],)
+    assert np.all((seam >= 0) & (seam < shape[1]))
+    assert np.all(np.abs(np.diff(seam)) <= 1)
+    if shape[1] == 1:
+        np.testing.assert_array_equal(seam, np.zeros(shape[0], dtype=np.int64))
+    if shape[0] == 1:
+        assert seam[0] == np.argmin(energy[0])
+
+
+def test_find_vertical_seam_two_columns():
+    np.testing.assert_array_equal(find_vertical_seam([[1, 0], [0, 1], [1, 0]]), [1, 0, 1])
+
+
+def test_find_vertical_seam_transposed_view_matches_copy():
+    # shrink_height passes a transposed view of the energy.
+    rng = np.random.default_rng(0)
+    energy_t = rng.normal(size=(25, 18))
+    view = energy_t.T
+    assert not view.flags.c_contiguous
+    np.testing.assert_array_equal(find_vertical_seam(view), find_vertical_seam(view.copy()))
