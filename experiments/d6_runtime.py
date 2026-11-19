@@ -45,7 +45,7 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure  # no pyplot: never opens a window, works headless
 
 from experiments import common
-from seamcarving import carve, energy, seam
+from seamcarving import carve, energy, resize, seam
 
 # --- experiment settings --------------------------------------------------------------------
 
@@ -185,17 +185,19 @@ def r4(x: float) -> float:
 
 
 def pick_photo():
-    """Return the dataset photo used for D6, or None if the dataset is empty.
+    """Return ``(path, rule)`` for the dataset photo used in D6, or None if there is no photo.
 
     Deterministic: the first landscape photo (width >= height) in file-name order; if there is
-    none, the first photo in file-name order.
+    none, the first photo in file-name order. ``rule`` says which of the two was applied.
     """
     photos = common.list_images()
     for path in photos:
         h, w = common.load_image(path).shape[:2]
         if w >= h:
-            return path
-    return photos[0] if photos else None
+            return path, "first landscape photo (W >= H) in file-name order"
+    if photos:
+        return photos[0], "no landscape photo; first photo in file-name order"
+    return None
 
 
 def resize_long_side(img: np.ndarray, long_side: int) -> np.ndarray:
@@ -333,8 +335,6 @@ def measure_shrink(img: np.ndarray, k: int) -> float:
 
 def measure_paper(photo: np.ndarray) -> list[tuple]:
     """Time the paper's 400 x 500 -> 100 x 100 example in both orientations."""
-    from seamcarving import resize as resize_module  # imported here: written later in wave 2
-
     rows = []
     target_h, target_w = PAPER_TARGET_HW
     orientations = (("assumed", PAPER_SOURCE_HW), ("swapped", PAPER_SOURCE_HW[::-1]))
@@ -342,12 +342,12 @@ def measure_paper(photo: np.ndarray) -> list[tuple]:
         img = crop_resize(photo, src_h, src_w)
 
         def run(img=img):
-            out = resize_module.resize(img, target_h, target_w)
+            out = resize.resize(img, target_h, target_w)
             if out.shape[:2] != (target_h, target_w):
                 raise RuntimeError("resize returned the wrong size")
 
         def warm_up(img=img):
-            resize_module.resize(img, img.shape[0] - 1, img.shape[1] - 1)
+            resize.resize(img, img.shape[0] - 1, img.shape[1] - 1)
 
         seconds = median_time(run, PAPER_REPEATS, warm_up)
         size = f"{src_h}x{src_w}->{target_h}x{target_w}"
@@ -623,7 +623,7 @@ def save_runtime_figure(steps, shrink, dp_compare, fit_seam, fit_shrink) -> None
 # --- main -----------------------------------------------------------------------------------
 
 
-def run_timings(photo_path) -> None:
+def run_timings(photo_path, selection_rule: str) -> None:
     """All photo-based measurements; writes d6_runtime.csv and d6_runtime.png."""
     photo = common.load_image(photo_path)
     rows = environment_rows() + method_rows()
@@ -633,7 +633,7 @@ def run_timings(photo_path) -> None:
             "photo",
             photo_path.name,
             shape=photo.shape[:2],
-            notes="first landscape photo in name order",
+            notes=selection_rule,
         )
     )
 
@@ -797,10 +797,7 @@ def run_timings(photo_path) -> None:
         )
         print(f"  fit {name}: {slope * 1e9:.2f} ns per pixel, R^2 = {r2:.4f}")
 
-    try:
-        rows += measure_paper(photo)
-    except NotImplementedError:
-        print("  paper example skipped: seamcarving.resize.resize is not implemented yet")
+    rows += measure_paper(photo)
 
     path = common.save_table("d6_runtime", rows, CSV_HEADER)
     print(f"wrote {path}")
@@ -810,22 +807,17 @@ def run_timings(photo_path) -> None:
 def main() -> None:
     print("D6: runtime")
     save_dp_example()
-    photo_path = pick_photo()
-    if photo_path is None:
+    # The only allowed skip: no photo in the dataset. Any other error propagates.
+    picked = pick_photo()
+    if picked is None:
         print(
             f"no photo in {common.IMAGES_DIR}: runtime measurements skipped "
             "(d6_runtime.png and d6_runtime.csv not written)"
         )
         return
-    print(f"photo: {photo_path.name}")
-    try:
-        run_timings(photo_path)
-    except NotImplementedError as exc:
-        where = exc.__traceback__
-        while where.tb_next is not None:
-            where = where.tb_next
-        name = where.tb_frame.f_code.co_name
-        print(f"runtime measurements skipped: {name}() is not implemented yet")
+    photo_path, selection_rule = picked
+    print(f"photo: {photo_path.name} ({selection_rule})")
+    run_timings(photo_path, selection_rule)
 
 
 if __name__ == "__main__":
