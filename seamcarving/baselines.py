@@ -92,7 +92,22 @@ def best_crop(
     Ties are exact for integer-valued energies; with float energies, rounding in the
     cumulative sum can break near-ties.
     """
-    raise NotImplementedError
+    img = _check_image(img)
+    new_h, new_w = _check_size(img, new_h, new_w, allow_larger=False)
+    energy = _get_energy(img, energy)
+    h, w = energy.shape
+    integral = np.zeros((h + 1, w + 1), dtype=np.float64)
+    integral[1:, 1:] = energy.cumsum(axis=0).cumsum(axis=1)
+    n_r, n_c = h - new_h + 1, w - new_w + 1
+    # sums[r, c] = energy[r:r + new_h, c:c + new_w].sum()
+    sums = (
+        integral[new_h:, new_w:]
+        - integral[:n_r, new_w:]
+        - integral[new_h:, :n_c]
+        + integral[:n_r, :n_c]
+    )
+    r0, c0 = np.unravel_index(int(np.argmax(sums)), sums.shape)
+    return img[r0:r0 + new_h, c0:c0 + new_w].copy()
 
 
 def remove_columns(img: np.ndarray, k: int, energy: np.ndarray | None = None) -> np.ndarray:

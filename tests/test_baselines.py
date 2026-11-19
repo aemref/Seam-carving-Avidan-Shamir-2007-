@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from seamcarving.baselines import (
+    best_crop,
     center_crop,
     scale,
 )
@@ -73,3 +74,61 @@ def test_center_crop(channels):
 def test_center_crop_invalid(new_size):
     with pytest.raises(ValueError):
         center_crop(make_image(12, 16), *new_size)
+
+
+# best_crop ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("channels", [None, 3])
+def test_best_crop_contains_high_energy_block(channels):
+    h, w, new_h, new_w = 12, 16, 6, 7
+    img = make_image(h, w, channels)
+    rng = np.random.default_rng(1)
+    energy = rng.random((h, w))
+    energy[1:5, 10:15] += 100.0  # off-center block that fits in the window
+    out = best_crop(img, new_h, new_w, energy=energy)
+    assert out.shape == (new_h, new_w) + img.shape[2:]
+    assert out.dtype == img.dtype
+
+    # Locate the crop in the image, then check it holds the block.
+    matches = [
+        (r, c)
+        for r in range(h - new_h + 1)
+        for c in range(w - new_w + 1)
+        if np.array_equal(img[r:r + new_h, c:c + new_w], out)
+    ]
+    assert len(matches) == 1
+    r0, c0 = matches[0]
+    assert r0 <= 1 and r0 + new_h >= 5 and c0 <= 10 and c0 + new_w >= 15
+
+    center = window_energy(energy, (h - new_h) // 2, (w - new_w) // 2, new_h, new_w)
+    assert window_energy(energy, r0, c0, new_h, new_w) >= center
+
+
+def test_best_crop_matches_brute_force():
+    h, w, new_h, new_w = 9, 11, 4, 5
+    img = np.arange(h * w).reshape(h, w)
+    energy = np.random.default_rng(2).random((h, w))
+    best = max(
+        ((r, c) for r in range(h - new_h + 1) for c in range(w - new_w + 1)),
+        key=lambda rc: window_energy(energy, *rc, new_h, new_w),
+    )
+    np.testing.assert_array_equal(
+        best_crop(img, new_h, new_w, energy=energy),
+        img[best[0]:best[0] + new_h, best[1]:best[1] + new_w],
+    )
+
+
+def test_best_crop_tie_takes_first_window():
+    img = np.arange(6 * 8).reshape(6, 8)
+    np.testing.assert_array_equal(best_crop(img, 3, 4, energy=np.ones((6, 8))), img[:3, :4])
+
+
+def test_best_crop_full_size_and_invalid():
+    img = make_image(5, 6)
+    energy = np.ones((5, 6))
+    np.testing.assert_array_equal(best_crop(img, 5, 6, energy=energy), img)
+    with pytest.raises(ValueError):
+        best_crop(img, 6, 6, energy=energy)
+    with pytest.raises(ValueError):
+        best_crop(img, 3, 3, energy=np.ones((5, 5)))
