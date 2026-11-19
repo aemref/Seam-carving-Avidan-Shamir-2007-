@@ -5,7 +5,7 @@ from collections.abc import Iterator
 import numpy as np
 import pytest
 
-from seamcarving.object_removal import apply_mask_weights, seams_needed
+from seamcarving.object_removal import apply_mask_weights, remove_object, seams_needed
 
 # Small hand-built energy map with negative values; max|e| = 5.
 ENERGY = np.array(
@@ -214,3 +214,10 @@ def test_seams_needed_returns_python_ints():
 
     assert type(n_vertical) is int
     assert type(n_horizontal) is int
+
+
+def test_remove_object_is_not_implemented_yet():
+    image = np.zeros((*ENERGY.shape, 3), dtype=np.uint8)
+
+    with pytest.raises(NotImplementedError):
+        remove_object(image, mask_from_pixels(REMOVAL_PIXELS))

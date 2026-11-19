@@ -110,14 +110,15 @@ def remove_object(
     energy_fn: EnergyFn | None = None,
     seam_fn: SeamFn | None = None,
 ) -> RemovalResult:
-    """Remove seams until no pixel of ``remove_mask`` is left.
+    """Remove the object under `remove_mask` from an (H, W, 3) image by carving seams.
 
-    Args:
-        img: (H, W[, 3]) uint8 image.
-        remove_mask: bool (H, W), pixels to remove.
-        protect_mask: bool (H, W), pixels to keep.
-        restore_size: insert seams afterwards to get back to the input size.
-        direction: "auto" | "vertical" | "horizontal".
-        dilate: grow the removal mask by this many pixels first.
+    Intended behaviour (implemented in a later wave): optionally dilate the removal mask by
+    `dilate` pixels and drop the pixels it shares with `protect_mask` from it, pick the
+    direction needing fewer seams when `direction` is "auto" (see `seams_needed`), then
+    repeatedly compute the energy as energy_fn(img, carry) with
+    carry = (remove_mask, protect_mask), weight it with `apply_mask_weights`, find a seam
+    with seam_fn(energy) and remove it, carving the masks along with the image until no
+    removal pixel is left. With `restore_size`, seam insertion enlarges the
+    result back to the original size. Returns the image, the seam count and the direction.
     """
-    raise NotImplementedError
+    raise NotImplementedError("remove_object is scheduled for a later wave")
