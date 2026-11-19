@@ -1,13 +1,43 @@
-"""Visualisation helpers. Owner: Berkay."""
+"""Visualisation helpers shared by all seam-carving experiments.
+
+Conventions: images are (H, W, 3) BGR uint8 or (H, W) gray uint8, energy maps are
+(H, W) float64, a vertical seam is an (H,) int array with seam[r] = column in row r.
+No function modifies its inputs.
+"""
 
 from pathlib import Path
 
 import numpy as np
 
+UINT8_MAX = 255
+
 
 def energy_to_image(energy: np.ndarray, log: bool = False) -> np.ndarray:
-    """Min-max stretch an energy map to uint8 (H, W); log=True: log(1 + e - e.min()) first."""
-    raise NotImplementedError
+    """Min-max stretch an (H, W) energy map to an (H, W) uint8 image.
+
+    With log=True the map is first compressed with log(1 + e - e.min()), so maps with
+    large negative object-removal weights still show their structure. A constant map
+    yields all zeros.
+    """
+    values = _as_2d_float(energy)
+    if log:
+        values = np.log1p(values - values.min())
+    return _stretch_to_uint8(values)
+
+
+def _as_2d_float(energy: np.ndarray) -> np.ndarray:
+    values = np.asarray(energy, dtype=np.float64)
+    if values.ndim != 2:
+        raise ValueError(f"energy must be a 2D (H, W) array, got shape {values.shape}")
+    return values
+
+
+def _stretch_to_uint8(values: np.ndarray) -> np.ndarray:
+    value_range = values.max() - values.min()
+    if value_range == 0:
+        return np.zeros(values.shape, dtype=np.uint8)
+    stretched = (values - values.min()) / value_range * UINT8_MAX
+    return np.clip(np.rint(stretched), 0, UINT8_MAX).astype(np.uint8)
 
 
 def draw_seams(
