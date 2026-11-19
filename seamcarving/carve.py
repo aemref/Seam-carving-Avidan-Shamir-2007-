@@ -144,4 +144,24 @@ def shrink_height(
     carry: arrays with leading shape (H, W).
     Returns a ShrinkResult with image (H-k, W[, C]) and removed/order (H, W).
     """
-    raise NotImplementedError
+    img = np.asarray(img)
+    if img.ndim not in (2, 3):
+        raise ValueError(f"img must have shape (H, W) or (H, W, C), got {img.shape}")
+    k = operator.index(k)
+    if not 0 <= k < img.shape[0]:
+        raise ValueError(f"k must satisfy 0 <= k < H={img.shape[0]}, got {k}")
+    carry = tuple(np.asarray(a) for a in carry)
+    for i, a in enumerate(carry):
+        if a.ndim < 2 or a.shape[:2] != img.shape[:2]:
+            raise ValueError(f"carry[{i}] must start with shape {img.shape[:2]}, got {a.shape}")
+
+    def swap(a: np.ndarray) -> np.ndarray:
+        return np.ascontiguousarray(np.swapaxes(a, 0, 1))
+
+    res = shrink_width(swap(img), k, energy_fn, seam_fn, tuple(swap(a) for a in carry))
+    return ShrinkResult(
+        swap(res.image),
+        tuple(swap(a) for a in res.carry),
+        swap(res.removed),
+        swap(res.order),
+    )

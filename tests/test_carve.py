@@ -6,6 +6,7 @@ import pytest
 from seamcarving.carve import (
     ShrinkResult,
     remove_vertical_seam,
+    shrink_height,
     shrink_width,
 )
 
@@ -225,3 +226,73 @@ def test_shrink_width_rejects_bad_seam_fn_output():
     with pytest.raises(ValueError):
         shrink_width(img, 1, standin_energy, lambda e: np.full(e.shape[0], e.shape[1]))
 
+
+# shrink_height ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize("channels", [None, 3])
+@pytest.mark.parametrize("seam_fn", SEAM_FNS)
+def test_shrink_height_matches_transposed_width(channels, seam_fn):
+    h, w, k = 10, 8, 4
+    img = make_image(h, w, channels)
+    carry = make_carry(h, w)
+    res = shrink_height(img, k, standin_energy, seam_fn, carry=carry)
+
+    assert res.image.shape == (h - k, w) + img.shape[2:]
+    assert res.image.dtype == img.dtype
+    assert res.removed.shape == (h, w) and res.order.shape == (h, w)
+    assert res.order.dtype == np.int32
+    np.testing.assert_array_equal(res.removed.sum(axis=0), np.full(w, k))
+    np.testing.assert_array_equal(res.removed, res.order >= 0)
+
+    ref = shrink_width(
+        img.swapaxes(0, 1), k, standin_energy, seam_fn,
+        carry=tuple(a.swapaxes(0, 1) for a in carry),
+    )
+    np.testing.assert_array_equal(res.image, ref.image.swapaxes(0, 1))
+    np.testing.assert_array_equal(res.removed, ref.removed.T)
+    np.testing.assert_array_equal(res.order, ref.order.T)
+    for out, out_ref, orig in zip(res.carry, ref.carry, carry, strict=True):
+        assert out.shape == (h - k, w) + orig.shape[2:]
+        np.testing.assert_array_equal(out, out_ref.swapaxes(0, 1))
+
+
+def test_shrink_height_consistency_and_no_mutation():
+    h, w, k = 10, 8, 3
+    img = make_image(h, w, 3)
+    carry = make_carry(h, w)
+    img_before = img.copy()
+    res = shrink_height(img, k, standin_energy, zigzag_seam, carry=carry)
+    np.testing.assert_array_equal(img, img_before)
+    # Column-wise consistency: remaining pixels of each column, in order.
+    for c in range(w):
+        np.testing.assert_array_equal(img[~res.removed[:, c], c], res.image[:, c])
+        for orig, cut in zip(carry, res.carry, strict=True):
+            np.testing.assert_array_equal(orig[~res.removed[:, c], c], cut[:, c])
+
+
+def test_shrink_height_energy_fn_gets_transposed_inputs():
+    h, w = 6, 9
+    shapes = []
+
+    def recording_energy(im, cr):
+        shapes.append((im.shape, tuple(a.shape for a in cr)))
+        return standin_energy(im, cr)
+
+    shrink_height(make_image(h, w, 3), 2, recording_energy, standin_seam,
+                  carry=(np.zeros((h, w)),))
+    assert shapes == [((w, h, 3), ((w, h),)), ((w, h - 1, 3), ((w, h - 1),))]
+
+
+def test_shrink_height_k_zero_and_invalid():
+    h, w = 6, 9
+    img = make_image(h, w)
+    res = shrink_height(img, 0, standin_energy, standin_seam)
+    np.testing.assert_array_equal(res.image, img)
+    assert not np.shares_memory(res.image, img)
+    assert not res.removed.any() and np.all(res.order == -1)
+    for k in (-1, h, h + 3):
+        with pytest.raises(ValueError):
+            shrink_height(img, k, standin_energy, standin_seam)
+    with pytest.raises(ValueError):
+        shrink_height(img, 1, standin_energy, standin_seam, carry=(np.zeros((w, h)),))
