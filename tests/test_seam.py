@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from seamcarving.seam import cumulative_map, find_vertical_seam
+from seamcarving.seam import cumulative_map, find_vertical_seam, is_valid_seam, seam_cost
 
 # Hand-computed example. Worked by hand:
 #   M row 1: 2+min(inf,1,4)=3   8+min(1,4,3)=9    1+min(4,3,5)=4    6+min(3,5,inf)=9
@@ -212,3 +212,80 @@ def test_find_vertical_seam_transposed_view_matches_copy():
     view = energy_t.T
     assert not view.flags.c_contiguous
     np.testing.assert_array_equal(find_vertical_seam(view), find_vertical_seam(view.copy()))
+
+
+# --- seam_cost and is_valid_seam ----------------------------------------------------------
+
+
+def test_seam_properties_and_cost_on_random_maps():
+    rng = np.random.default_rng(0)
+    for _ in range(50):
+        n_rows, n_cols = rng.integers(1, 30, size=2)
+        integer_map = rng.integers(-100, 100, size=(n_rows, n_cols)).astype(np.float64)
+        float_map = rng.normal(size=(n_rows, n_cols)) * 1e3
+        for energy in (integer_map, float_map):
+            seam = find_vertical_seam(energy)
+            assert seam.dtype == np.int64 and seam.shape == (n_rows,)
+            assert is_valid_seam(seam, n_cols) is True
+            cost = seam_cost(energy, seam)
+            assert type(cost) is float
+            M, _ = cumulative_map(energy)
+            assert cost == pytest.approx(M[-1].min(), rel=1e-12, abs=1e-9)
+        # Integer-valued maps are summed exactly, so the match is exact.
+        assert (
+            seam_cost(integer_map, find_vertical_seam(integer_map))
+            == cumulative_map(integer_map)[0][-1].min()
+        )
+
+
+def test_seam_cost_hand_example():
+    assert seam_cost(HAND_ENERGY, np.array([2, 2, 3, 3])) == 7.0
+    assert seam_cost(HAND_ENERGY.astype(np.int32), [0, 0, 1, 2]) == 1 + 2 + 3 + 5
+
+
+@pytest.mark.parametrize(
+    "seam",
+    [[2, 2, 3], [2, 2, 3, 3, 3], [2, 2, 3, 5], [0, 2, 3, 3], [-1, 0, 0, 0], [0.0, 0.0, 0.0, 0.0]],
+    ids=["too-short", "too-long", "outside", "jump", "negative", "float"],
+)
+def test_seam_cost_rejects_invalid_seam(seam):
+    with pytest.raises(ValueError):
+        seam_cost(HAND_ENERGY, seam)
+
+
+@pytest.mark.parametrize(
+    ("seam", "width"),
+    [
+        ([0, 1, 2, 1, 0], 3),
+        ([4, 4, 4], 5),
+        ([0], 1),
+        (np.array([3, 2, 3], dtype=np.int8), 4),
+        (np.array([3, 2, 3], dtype=np.uint16), 4),  # unsigned diff 2 - 3 must not wrap
+        (np.array([1, 2]), np.int64(3)),
+    ],
+)
+def test_is_valid_seam_accepts(seam, width):
+    assert is_valid_seam(seam, width) is True
+
+
+@pytest.mark.parametrize(
+    ("seam", "width"),
+    [
+        ([0, 2], 3),  # jump of two columns
+        ([1, 0], 1),  # outside on the right
+        ([0, -1], 3),  # negative column
+        ([3, 3], 3),  # column == width
+        (np.array([2, 0], dtype=np.uint8), 3),  # unsigned jump of two columns
+        ([], 3),  # empty
+        ([[0, 1]], 3),  # 2-D
+        ([0.0, 1.0], 3),  # float dtype
+        ([True, False], 3),  # bool dtype
+        ([0, 1], 0),  # width 0
+        ([0, 1], 2.0),  # width not an integer
+        ("ab", 3),  # not numeric
+        ([[0, 1], [0]], 3),  # ragged
+        (np.array([0, 2**64 - 1], dtype=np.uint64), 3),  # huge unsigned value
+    ],
+)
+def test_is_valid_seam_rejects_without_raising(seam, width):
+    assert is_valid_seam(seam, width) is False

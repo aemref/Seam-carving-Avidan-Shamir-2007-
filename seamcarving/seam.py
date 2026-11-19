@@ -15,6 +15,8 @@ On a constant energy map the seam is therefore column 0 in every row.
 The energy may contain negative and very large values (mask weights); it never contains inf.
 """
 
+import operator
+
 import numpy as np
 
 
@@ -95,10 +97,52 @@ def find_vertical_seam(energy: np.ndarray) -> np.ndarray:
 
 
 def seam_cost(energy: np.ndarray, seam: np.ndarray) -> float:
-    """Return the total energy along a vertical seam."""
-    raise NotImplementedError
+    """Return the total energy along a vertical seam (paper Eq. 4).
+
+    Args:
+        energy: (H, W) energy map (any real dtype, not modified).
+        seam: (H,) integer column per row; must satisfy :func:`is_valid_seam`.
+
+    Returns:
+        ``sum(energy[r, seam[r]] for r in range(H))`` as a Python float. For the seam from
+        :func:`find_vertical_seam` this equals ``M[-1].min()`` (up to float rounding).
+
+    Raises:
+        ValueError: if the seam is not a valid seam of length H for this energy map.
+    """
+    e = _as_energy(energy)
+    n_rows, n_cols = e.shape
+    s = np.asarray(seam)
+    if not is_valid_seam(s, n_cols) or s.shape[0] != n_rows:
+        raise ValueError(f"not a valid seam for an energy map of shape {e.shape}")
+    return float(e[np.arange(n_rows), s].sum())
 
 
 def is_valid_seam(seam: np.ndarray, width: int) -> bool:
-    """Check that a seam stays inside ``[0, width)`` and moves at most one column per row."""
-    raise NotImplementedError
+    """Check that a seam stays inside ``[0, width)`` and moves at most one column per row.
+
+    Never raises: anything that is not a valid seam gives ``False``. A valid seam is a
+    non-empty 1-D array of integers (bool is not accepted), every value in ``[0, width)``,
+    and neighbouring rows differ by at most one column. The length is not checked, because
+    the height is not passed; :func:`seam_cost` checks it against the energy map.
+
+    Args:
+        seam: candidate seam, (H,) integer array (or list).
+        width: image width W, at least 1.
+
+    Returns:
+        Python bool.
+    """
+    try:
+        s = np.asarray(seam)
+        width = operator.index(width)
+    except (TypeError, ValueError):
+        return False
+    if s.ndim != 1 or s.size == 0 or width < 1:
+        return False
+    if s.dtype == np.bool_ or not np.issubdtype(s.dtype, np.integer):
+        return False
+    s = s.astype(np.int64)  # signed, so that np.diff of unsigned seams cannot wrap around
+    inside = np.all((s >= 0) & (s < width))
+    connected = np.all(np.abs(np.diff(s)) <= 1)
+    return bool(inside and connected)
