@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+from PIL import Image
 
 from seamcarving.viz import (
     GRID_GAP,
@@ -7,6 +8,7 @@ from seamcarving.viz import (
     comparison_grid,
     draw_seams,
     energy_to_image,
+    save_gif,
 )
 
 HEIGHT = 6
@@ -15,6 +17,8 @@ CELL_HEIGHT = 40
 BACKGROUND_VALUE = 50
 SEAM_COLOR = (0, 0, 255)
 LARGE_NEGATIVE_WEIGHT = -1e8
+FRAME_COUNT = 4
+FPS = 10
 
 
 def make_bgr(height=HEIGHT, width=WIDTH, value=BACKGROUND_VALUE):
@@ -210,3 +214,46 @@ def test_comparison_grid_does_not_modify_inputs():
 
     for image, original in zip(images, originals):
         np.testing.assert_array_equal(image, original)
+
+
+def make_distinct_frames(count=FRAME_COUNT):
+    return [make_bgr(value=index * 40) for index in range(count)]
+
+
+def test_save_gif_writes_all_frames(tmp_path):
+    path = tmp_path / "anim.gif"
+
+    save_gif(make_distinct_frames(), path, fps=FPS)
+
+    with Image.open(path) as gif:
+        assert gif.n_frames == FRAME_COUNT
+        assert gif.size == (WIDTH, HEIGHT)
+        assert gif.info["loop"] == 0
+
+
+def test_save_gif_accepts_str_path_and_gray_frames(tmp_path):
+    path = tmp_path / "gray.gif"
+    frames = [make_gray(value=index * 40) for index in range(FRAME_COUNT)]
+
+    save_gif(frames, str(path))
+
+    with Image.open(path) as gif:
+        assert gif.n_frames == FRAME_COUNT
+
+
+def test_save_gif_creates_only_the_target_file(tmp_path):
+    save_gif(make_distinct_frames(), tmp_path / "anim.gif")
+
+    assert [entry.name for entry in tmp_path.iterdir()] == ["anim.gif"]
+
+
+def test_save_gif_rejects_mismatched_frame_sizes(tmp_path):
+    frames = [make_bgr(), make_bgr(width=WIDTH + 1)]
+
+    with pytest.raises(ValueError):
+        save_gif(frames, tmp_path / "bad.gif")
+
+
+def test_save_gif_rejects_empty_frames(tmp_path):
+    with pytest.raises(ValueError):
+        save_gif([], tmp_path / "empty.gif")

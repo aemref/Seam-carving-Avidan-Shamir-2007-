@@ -9,8 +9,10 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from PIL import Image
 
 UINT8_MAX = 255
+MILLISECONDS_PER_SECOND = 1000
 
 GRID_GAP = 10
 GRID_BACKGROUND = (255, 255, 255)
@@ -220,5 +222,25 @@ def _paste_centered(
 
 
 def save_gif(frames: list[np.ndarray], path: str | Path, fps: int = 15) -> None:
-    """Write a list of BGR uint8 frames as an animated GIF."""
-    raise NotImplementedError
+    """Write BGR or gray uint8 frames, all of equal (H, W), as an endlessly looping GIF.
+
+    Note: Pillow merges consecutive identical frames into one longer frame.
+    """
+    _validate_gif_input(frames, fps)
+    first, *rest = [_to_rgb_pil_image(frame) for frame in frames]
+    frame_duration_ms = round(MILLISECONDS_PER_SECOND / fps)
+    first.save(Path(path), save_all=True, append_images=rest, duration=frame_duration_ms, loop=0)
+
+
+def _validate_gif_input(frames: list[np.ndarray], fps: int) -> None:
+    if not frames:
+        raise ValueError("frames must not be empty")
+    if fps <= 0:
+        raise ValueError(f"fps must be positive, got {fps}")
+    frame_sizes = {frame.shape[:2] for frame in frames}
+    if len(frame_sizes) > 1:
+        raise ValueError(f"all frames must have the same (H, W), got {sorted(frame_sizes)}")
+
+
+def _to_rgb_pil_image(frame: np.ndarray) -> Image.Image:
+    return Image.fromarray(cv2.cvtColor(_to_bgr(frame), cv2.COLOR_BGR2RGB))
