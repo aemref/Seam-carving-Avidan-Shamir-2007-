@@ -49,6 +49,7 @@ from seamcarving import carve, energy, resize, seam
 
 # --- experiment settings --------------------------------------------------------------------
 
+PHOTO_OWNER = "emre"  # D6 measures on one of its owner's photos (see pick_photo)
 LONG_SIDES = (300, 600, 800, 1200)  # long side of the four resized versions, pixels
 STEP_SEAMS = 10  # seams removed one by one per repeat for the per-step timing
 STEP_REPEATS = 3  # -> STEP_SEAMS * STEP_REPEATS samples per step and size
@@ -187,16 +188,24 @@ def r4(x: float) -> float:
 def pick_photo():
     """Return ``(path, rule)`` for the dataset photo used in D6, or None if there is no photo.
 
-    Deterministic: the first landscape photo (width >= height) in file-name order; if there is
-    none, the first photo in file-name order. ``rule`` says which of the two was applied.
+    Deterministic: the first landscape photo (width >= height) in file-name order among the
+    experiment owner's photos; only if he has no landscape photo, the first one in the whole
+    dataset. With the owner's photos in place the choice does not change when the other
+    members add theirs, so a re-run measures the same image as the report. Without any
+    landscape photo, the first photo in file-name order. ``rule`` says which case was applied.
     """
-    photos = common.list_images()
-    for path in photos:
-        h, w = common.load_image(path).shape[:2]
-        if w >= h:
-            return path, "first landscape photo (W >= H) in file-name order"
-    if photos:
-        return photos[0], "no landscape photo; first photo in file-name order"
+    everyone = common.list_images()
+    groups = (
+        (common.list_images(person=PHOTO_OWNER), f"among {PHOTO_OWNER}'s photos"),
+        (everyone, "in the dataset"),
+    )
+    for photos, where in groups:
+        for path in photos:
+            h, w = common.load_image(path).shape[:2]
+            if w >= h:
+                return path, f"first landscape photo (W >= H) {where}, in file-name order"
+    if everyone:
+        return everyone[0], "no landscape photo; first photo in file-name order"
     return None
 
 
