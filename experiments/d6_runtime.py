@@ -14,8 +14,8 @@ Measurements (all on one dataset photo, resized with cv2.resize):
        ``seam.cumulative_map`` at two sizes. Both must give the same ``M`` and ``back``.
     3. Total time of shrinking the width by 25 % with ``carve.shrink_width`` at four sizes,
        and a linear fit of time against the number of pixels.
-    4. The paper's example (Sec. 5): retarget 400 x 500 to 100 x 100 in about 2.2 s on 2007
-       hardware, measured with ``seamcarving.resize.resize``.
+    4. The paper's example (Sec. 5): retarget 400 x 500 to 100 x 100 in about 2.2 s (the
+       paper does not state its hardware), measured here with ``seamcarving.resize.resize``.
 
 Timing method: ``time.perf_counter``; one (short) untimed warm-up call before each
 measurement; the reported statistic is always the median of the repeats (counts in the
@@ -391,7 +391,7 @@ def measure_paper(photo: np.ndarray) -> list[tuple]:
             None,
             "",
             "",
-            "Avidan & Shamir 2007, Sec. 5, 2007 hardware",
+            "Avidan & Shamir 2007, Sec. 5; the paper does not state its hardware",
         )
     )
     return rows
