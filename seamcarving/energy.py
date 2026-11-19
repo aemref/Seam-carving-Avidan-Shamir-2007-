@@ -128,5 +128,24 @@ def compute_energy(
 
 
 def make_energy_fn(**kwargs) -> EnergyFn:
-    """Wrap ``compute_energy`` (with ``kwargs``) into the ``(img, carry)`` signature."""
-    raise NotImplementedError
+    """Wrap compute_energy into the EnergyFn signature ``(img, carry) -> (H, W) float64``.
+
+    ``kwargs`` are passed to compute_energy; they are checked here so that a typo
+    fails immediately rather than in the middle of a carving loop. ``carry`` is ignored.
+    """
+    allowed = {"method", "color", "blur_sigma", "norm"}
+    unknown = set(kwargs) - allowed
+    if unknown:
+        raise TypeError(f"unexpected arguments for compute_energy: {sorted(unknown)}")
+    _check_options(
+        kwargs.get("method", "sobel"),
+        kwargs.get("color", "gray"),
+        kwargs.get("blur_sigma", 0.0),
+        kwargs.get("norm", "l1"),
+    )
+    options = dict(kwargs)
+
+    def energy_fn(img: np.ndarray, carry: tuple = ()) -> np.ndarray:
+        return compute_energy(img, **options)
+
+    return energy_fn

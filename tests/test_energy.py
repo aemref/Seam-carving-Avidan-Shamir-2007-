@@ -1,8 +1,10 @@
+import inspect
+
 import cv2
 import numpy as np
 import pytest
 
-from seamcarving.energy import METHODS, compute_energy, to_gray
+from seamcarving.energy import METHODS, compute_energy, make_energy_fn, to_gray
 
 
 def _random_bgr(shape=(15, 21), seed=0):
@@ -169,6 +171,8 @@ def test_input_unchanged():
 def test_bad_options_raise(kwargs):
     with pytest.raises(ValueError):
         compute_energy(_random_bgr(), **kwargs)
+    with pytest.raises(ValueError):
+        make_energy_fn(**kwargs)
 
 
 def test_bad_image_shape_raises():
@@ -176,3 +180,20 @@ def test_bad_image_shape_raises():
         compute_energy(np.zeros((5, 5, 4)))
     with pytest.raises(ValueError):
         compute_energy(np.zeros(5))
+
+
+def test_make_energy_fn_signature_and_result():
+    img = _random_bgr(seed=10)
+    fn = make_energy_fn(method="scharr", color="sum", norm="l2")
+    assert list(inspect.signature(fn).parameters) == ["img", "carry"]
+    carry = (np.zeros(img.shape[:2], dtype=bool),)
+    np.testing.assert_array_equal(
+        fn(img, carry),
+        compute_energy(img, method="scharr", color="sum", norm="l2"),
+    )
+    np.testing.assert_array_equal(make_energy_fn()(img, ()), compute_energy(img))
+
+
+def test_make_energy_fn_rejects_unknown_keyword():
+    with pytest.raises(TypeError):
+        make_energy_fn(methd="sobel")
