@@ -4,6 +4,8 @@ The four directory constants are read when a function is called, not when it is 
 so tests can point them at a temporary folder with ``monkeypatch.setattr``.
 """
 
+import csv
+import io
 import re
 from collections.abc import Iterable, Sequence
 from pathlib import Path
@@ -155,5 +157,28 @@ def save_figure(name: str, img: np.ndarray) -> Path:
 
 
 def save_table(name: str, rows: Iterable[Sequence], header: Sequence[str]) -> Path:
-    """Write ``results/tables/<name>.csv`` and return its path."""
-    raise NotImplementedError
+    """Write ``header`` and ``rows`` as ``TABLE_DIR/<name>.csv`` and return the written path.
+
+    UTF-8 without BOM, comma separated, ``\\n`` line endings on every platform. Values are
+    written with ``str()`` (``None`` becomes an empty cell), so round floats before passing
+    them if a fixed precision is wanted. Every row must have exactly ``len(header)`` values;
+    otherwise ``ValueError`` is raised and no file is written. ``name`` is a file stem
+    without folders or extension, e.g. ``"d2_shrink"``. The folder is created if needed and
+    an existing file is overwritten; the same input gives the same bytes.
+    """
+    header = list(header)
+    if not header:
+        raise ValueError("header must not be empty")
+    rows = list(rows)
+    for i, row in enumerate(rows):
+        if isinstance(row, (str, bytes)):
+            raise TypeError(f"row {i} is a string, expected a sequence of values")
+        if len(row) != len(header):
+            raise ValueError(f"row {i} has {len(row)} values but the header has {len(header)}")
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow(header)
+    writer.writerows(rows)
+    path = _output_path(TABLE_DIR, name, ".csv")
+    path.write_text(buffer.getvalue(), encoding="utf-8", newline="")
+    return path

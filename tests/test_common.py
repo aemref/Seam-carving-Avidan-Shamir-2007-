@@ -285,3 +285,48 @@ def test_save_figure_reads_dir_at_call_time(dirs, tmp_path, monkeypatch):
     other = tmp_path / "other_figs"
     monkeypatch.setattr(common, "FIG_DIR", other)
     assert common.save_figure("x", np.zeros((2, 2), np.uint8)) == other / "x.png"
+
+
+# --- save_table --------------------------------------------------------------
+
+
+def test_save_table_writes_utf8_csv(dirs):
+    rows = [
+        ("manzara_01_emre", 25, 0.125, "ğüşİ"),
+        ["nesne_01_mirza", np.int64(10), np.float64(1.5), None],
+        ("a,b", 0, 'say "hi"', True),
+    ]
+    path = common.save_table("d0_table", (r for r in rows), ["photo", "pct", "seconds", "note"])
+    assert path == dirs["TABLE_DIR"] / "d0_table.csv"
+    assert path.read_bytes().decode("utf-8") == (
+        "photo,pct,seconds,note\n"
+        "manzara_01_emre,25,0.125,ğüşİ\n"
+        "nesne_01_mirza,10,1.5,\n"
+        '"a,b",0,"say ""hi""",True\n'
+    )
+
+
+def test_save_table_header_only_and_deterministic(dirs):
+    path = common.save_table("empty", [], ("a", "b"))
+    assert path.read_bytes() == b"a,b\n"
+    rows = [(1, 2.0), (3, 4.5)]
+    first = common.save_table("det", rows, ("a", "b")).read_bytes()
+    assert common.save_table("det", rows, ("a", "b")).read_bytes() == first
+
+
+def test_save_table_errors_write_nothing(dirs):
+    with pytest.raises(ValueError, match="row 1 has 1 values"):
+        common.save_table("bad", [(1, 2), (3,)], ("a", "b"))
+    with pytest.raises(TypeError, match="string"):
+        common.save_table("bad", ["ab"], ("a", "b"))
+    with pytest.raises(ValueError, match="header"):
+        common.save_table("bad", [], [])
+    with pytest.raises(ValueError, match="name"):
+        common.save_table("bad.csv", [], ("a",))
+    assert not (dirs["TABLE_DIR"] / "bad.csv").exists()
+
+
+def test_save_table_reads_dir_at_call_time(dirs, tmp_path, monkeypatch):
+    other = tmp_path / "other_tables"
+    monkeypatch.setattr(common, "TABLE_DIR", other)
+    assert common.save_table("x", [(1,)], ("a",)) == other / "x.csv"
