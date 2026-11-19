@@ -8,6 +8,8 @@ here as module constants.
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 # np.pad modes for each supported border. "reflect" mirrors without repeating
@@ -18,7 +20,7 @@ _PAD_MODES = {
     "zero": "constant",  # cv2.BORDER_CONSTANT with value 0
 }
 
-
+# Sobel (week 5, slide 57). *_ROWS differentiates along the row index r
 # (responds to horizontal edges), *_COLS along the column index c.
 SOBEL_ROWS = np.array([[-1, -2, -1], [0, 0, 0], [1, 2, 1]], dtype=np.float64)
 SOBEL_COLS = SOBEL_ROWS.T.copy()
@@ -78,5 +80,22 @@ def correlate2d(img: np.ndarray, kernel: np.ndarray, border: str = "reflect") ->
 
 
 def gaussian_kernel(sigma: float) -> np.ndarray:
-    """Return a square Gaussian kernel with an odd side length that sums to 1."""
-    raise NotImplementedError
+    """Square, normalised Gaussian kernel.
+
+    Args:
+        sigma: standard deviation in pixels, > 0.
+
+    Returns:
+        (n, n) float64 array summing to 1, where n is ceil(6 * sigma) rounded up
+        to the next odd number (sigma = 1 -> 7 x 7, week 5, slide 28).
+    """
+    if not sigma > 0:
+        raise ValueError(f"sigma must be > 0, got {sigma}")
+    n = math.ceil(6 * sigma)
+    if n % 2 == 0:
+        n += 1
+    half = n // 2
+    t = np.arange(-half, half + 1, dtype=np.float64)
+    g = np.exp(-(t**2) / (2.0 * sigma**2))
+    kernel = np.outer(g, g)
+    return kernel / kernel.sum()

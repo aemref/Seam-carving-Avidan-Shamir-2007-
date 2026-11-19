@@ -11,6 +11,7 @@ from seamcarving.filters import (
     SOBEL_COLS,
     SOBEL_ROWS,
     correlate2d,
+    gaussian_kernel,
 )
 
 BORDERS = {
@@ -69,6 +70,24 @@ def test_derivative_kernels_sum_to_zero(kernel):
 def test_transposed_constants():
     np.testing.assert_array_equal(SOBEL_COLS, SOBEL_ROWS.T)
     np.testing.assert_array_equal(SCHARR_COLS, SCHARR_ROWS.T)
+
+
+@pytest.mark.parametrize(("sigma", "side"), [(0.5, 3), (1.0, 7), (1.5, 9), (2.0, 13), (0.1, 1)])
+def test_gaussian_kernel_size_and_sum(sigma, side):
+    k = gaussian_kernel(sigma)
+    assert k.shape == (side, side)
+    assert k.dtype == np.float64
+    assert k.sum() == pytest.approx(1.0, abs=1e-12)
+    np.testing.assert_allclose(k, k.T)
+    np.testing.assert_allclose(k, np.rot90(k, 2))
+    assert np.unravel_index(np.argmax(k), k.shape) == (side // 2, side // 2)
+
+
+def test_gaussian_kernel_rejects_bad_sigma():
+    with pytest.raises(ValueError):
+        gaussian_kernel(0)
+    with pytest.raises(ValueError):
+        gaussian_kernel(-1.0)
 
 
 def test_even_kernel_raises():
