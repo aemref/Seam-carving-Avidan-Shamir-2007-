@@ -12,6 +12,18 @@ import numpy as np
 
 UINT8_MAX = 255
 
+GRID_GAP = 10
+GRID_BACKGROUND = (255, 255, 255)
+DEFAULT_COLUMNS_PER_ROW = 5
+
+LABEL_STRIP_HEIGHT = 32
+LABEL_FONT = cv2.FONT_HERSHEY_SIMPLEX
+LABEL_FONT_SCALE = 0.6
+LABEL_MIN_FONT_SCALE = 0.4
+LABEL_THICKNESS = 1
+LABEL_COLOR = (0, 0, 0)
+LABEL_HORIZONTAL_PADDING = 4
+
 
 def energy_to_image(energy: np.ndarray, log: bool = False) -> np.ndarray:
     """Min-max stretch an (H, W) energy map to an (H, W) uint8 image.
@@ -94,8 +106,117 @@ def comparison_grid(
     cols: int | None = None,
     cell_height: int = 320,
 ) -> np.ndarray:
-    """Lay images out in a labelled grid. Returns BGR uint8; labels must be ASCII."""
-    raise NotImplementedError
+    """Lay out labelled images on a white BGR uint8 canvas.
+
+    Every image is scaled to cell_height (aspect ratio kept) with its label in a strip
+    below. Cells fill rows left to right; cols=None puts up to 5 images in one row and
+    wraps longer lists into rows of 5. Each grid column is as wide as its widest cell,
+    narrower cells are centred in it. Labels must be ASCII (cv2.putText cannot draw
+    e.g. Turkish characters); a label wider than its image first shrinks its font
+    down to LABEL_MIN_FONT_SCALE, then widens the cell instead of being clipped.
+    """
+    _validate_grid_input(images, labels, cols, cell_height)
+    cells = [_labelled_cell(img, label, cell_height) for img, label in zip(images, labels)]
+    columns_per_row = cols or DEFAULT_COLUMNS_PER_ROW
+    rows = [
+        cells[start : start + columns_per_row] for start in range(0, len(cells), columns_per_row)
+    ]
+    return _assemble_grid(rows)
+
+
+def _validate_grid_input(
+    images: list[np.ndarray], labels: list[str], cols: int | None, cell_height: int
+) -> None:
+    if not images:
+        raise ValueError("images must not be empty")
+    if len(images) != len(labels):
+        raise ValueError(f"got {len(images)} images but {len(labels)} labels")
+    for label in labels:
+        if not label.isascii():
+            raise ValueError(f"label {label!r} contains non-ASCII characters cv2 cannot draw")
+    if cols is not None and cols < 1:
+        raise ValueError(f"cols must be at least 1, got {cols}")
+    if cell_height < 1:
+        raise ValueError(f"cell_height must be at least 1, got {cell_height}")
+
+
+def _labelled_cell(img: np.ndarray, label: str, cell_height: int) -> np.ndarray:
+    """Return a (cell_height + LABEL_STRIP_HEIGHT, W', 3) image-plus-label cell."""
+    scaled = _scale_to_height(_to_bgr(img), cell_height)
+    font_scale = _fitting_font_scale(label, scaled.shape[1])
+    cell_width = max(scaled.shape[1], _padded_text_width(label, font_scale))
+    cell = _blank_canvas(cell_height + LABEL_STRIP_HEIGHT, cell_width)
+    _paste_centered(cell, scaled, top=0, slot_left=0, slot_width=cell_width)
+    _draw_label(cell, label, font_scale, top=cell_height)
+    return cell
+
+
+def _scale_to_height(img: np.ndarray, height: int) -> np.ndarray:
+    width = max(1, round(img.shape[1] * height / img.shape[0]))
+    return cv2.resize(img, (width, height), interpolation=cv2.INTER_AREA)
+
+
+def _fitting_font_scale(label: str, available_width: int) -> float:
+    natural_width = _padded_text_width(label, LABEL_FONT_SCALE)
+    if natural_width <= available_width:
+        return LABEL_FONT_SCALE
+    shrunk_scale = LABEL_FONT_SCALE * available_width / natural_width
+    return max(shrunk_scale, LABEL_MIN_FONT_SCALE)
+
+
+def _padded_text_width(label: str, font_scale: float) -> int:
+    (text_width, _), _ = cv2.getTextSize(label, LABEL_FONT, font_scale, LABEL_THICKNESS)
+    return text_width + 2 * LABEL_HORIZONTAL_PADDING
+
+
+def _draw_label(cell: np.ndarray, label: str, font_scale: float, top: int) -> None:
+    (text_width, text_height), _ = cv2.getTextSize(label, LABEL_FONT, font_scale, LABEL_THICKNESS)
+    left = (cell.shape[1] - text_width) // 2
+    baseline_row = top + (LABEL_STRIP_HEIGHT + text_height) // 2
+    cv2.putText(
+        cell,
+        label,
+        (left, baseline_row),
+        LABEL_FONT,
+        font_scale,
+        LABEL_COLOR,
+        LABEL_THICKNESS,
+        cv2.LINE_AA,
+    )
+
+
+def _assemble_grid(rows: list[list[np.ndarray]]) -> np.ndarray:
+    column_widths = _column_widths(rows)
+    row_height = rows[0][0].shape[0]
+    canvas_height = len(rows) * row_height + (len(rows) + 1) * GRID_GAP
+    canvas_width = sum(column_widths) + (len(column_widths) + 1) * GRID_GAP
+    canvas = _blank_canvas(canvas_height, canvas_width)
+    column_lefts = np.cumsum([GRID_GAP] + [width + GRID_GAP for width in column_widths[:-1]])
+    for row_index, row in enumerate(rows):
+        top = GRID_GAP + row_index * (row_height + GRID_GAP)
+        for cell, left, width in zip(row, column_lefts, column_widths):
+            _paste_centered(canvas, cell, top=top, slot_left=int(left), slot_width=width)
+    return canvas
+
+
+def _column_widths(rows: list[list[np.ndarray]]) -> list[int]:
+    column_count = len(rows[0])
+    return [
+        max(row[column].shape[1] for row in rows if column < len(row))
+        for column in range(column_count)
+    ]
+
+
+def _blank_canvas(height: int, width: int) -> np.ndarray:
+    return np.full((height, width, 3), GRID_BACKGROUND, dtype=np.uint8)
+
+
+def _paste_centered(
+    canvas: np.ndarray, patch: np.ndarray, top: int, slot_left: int, slot_width: int
+) -> None:
+    height, width = patch.shape[:2]
+    left = slot_left + (slot_width - width) // 2
+    canvas[top : top + height, left : left + width] = patch
 
 
 def save_gif(frames: list[np.ndarray], path: str | Path, fps: int = 15) -> None:
