@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from enum import Enum
 from itertools import pairwise
 
+import cv2
 import numpy as np
 
 Point = tuple[float, float]
@@ -229,3 +230,56 @@ def _tint(pixels: np.ndarray, color_bgr: tuple[int, int, int]) -> np.ndarray:
     """Blend (N, 3) uint8 pixels toward ``color_bgr`` by OVERLAY_ALPHA."""
     blended = (1.0 - OVERLAY_ALPHA) * pixels + OVERLAY_ALPHA * np.array(color_bgr)
     return np.round(blended).astype(np.uint8)
+
+
+@dataclass(frozen=True)
+class DisplayTransform:
+    """Maps between full-resolution image pixels and the (smaller) displayed pixels.
+
+    ``scale`` is display size / image size and never exceeds 1. Pixel centers map to
+    pixel centers, so display -> image -> display is exact.
+    """
+
+    scale: float
+
+    @classmethod
+    def fit(cls, image_shape: tuple[int, ...], max_display_side: int) -> DisplayTransform:
+        """Scale so the image's longer side is at most ``max_display_side`` pixels."""
+        long_side = max(image_shape[:2])
+        return cls(min(1.0, max_display_side / long_side))
+
+    def display_shape(self, image_shape: tuple[int, ...]) -> tuple[int, int]:
+        """(height, width) of the displayed image; floored so it maps inside the image."""
+        return (
+            max(1, int(image_shape[0] * self.scale)),
+            max(1, int(image_shape[1] * self.scale)),
+        )
+
+    def to_image_point(self, display_point: Point) -> tuple[int, int]:
+        """Image (row, col) under a display pixel; not clipped to the image."""
+        row, col = display_point
+        return int(self._display_to_image_index(row)), int(self._display_to_image_index(col))
+
+    def to_display_point(self, image_point: Point) -> tuple[int, int]:
+        """Display (row, col) showing an image pixel."""
+        row, col = image_point
+        return int(np.floor((row + 0.5) * self.scale)), int(np.floor((col + 0.5) * self.scale))
+
+    def to_image_radius(self, display_radius: float) -> float:
+        return display_radius / self.scale
+
+    def shrink_mask(self, mask: np.ndarray) -> np.ndarray:
+        """Nearest-neighbor resample of an (H, W) mask to the display shape."""
+        display_height, display_width = self.display_shape(mask.shape)
+        rows = self._display_to_image_index(np.arange(display_height))
+        cols = self._display_to_image_index(np.arange(display_width))
+        return mask[np.ix_(rows, cols)]
+
+    def shrink_image(self, image: np.ndarray) -> np.ndarray:
+        """Area-averaged (H, W, 3) image resized to the display shape."""
+        display_height, display_width = self.display_shape(image.shape)
+        return cv2.resize(image, (display_width, display_height), interpolation=cv2.INTER_AREA)
+
+    def _display_to_image_index(self, display_index: float | np.ndarray) -> np.ndarray:
+        """Image row/col index whose pixel contains the display pixel's center."""
+        return np.floor((display_index + 0.5) / self.scale).astype(int)

@@ -24,6 +24,8 @@ IMAGE_SHAPE = (40, 60)
 CENTER = (20, 30)
 BRUSH_RADIUS = 5
 GRAY_LEVEL = 100
+LARGE_IMAGE_SHAPE = (3024, 4032)
+MAX_DISPLAY_SIDE = 1000
 
 
 def blank_mask():
@@ -246,3 +248,60 @@ def test_overlay_does_not_modify_image():
     mp.render_overlay(image, pixels_within(BRUSH_RADIUS, CENTER), blank_mask())
 
     assert (image == GRAY_LEVEL).all()
+
+
+def test_small_image_is_displayed_unscaled():
+    transform = mp.DisplayTransform.fit(IMAGE_SHAPE, MAX_DISPLAY_SIDE)
+
+    assert transform.scale == 1.0
+    assert transform.to_image_point(CENTER) == CENTER
+
+
+def test_large_image_is_fit_to_max_display_side():
+    transform = mp.DisplayTransform.fit(LARGE_IMAGE_SHAPE, MAX_DISPLAY_SIDE)
+
+    display_height, display_width = transform.display_shape(LARGE_IMAGE_SHAPE)
+
+    assert display_width == MAX_DISPLAY_SIDE
+    assert display_height == LARGE_IMAGE_SHAPE[0] * MAX_DISPLAY_SIDE // LARGE_IMAGE_SHAPE[1]
+
+
+def test_display_to_image_to_display_round_trip_is_exact():
+    transform = mp.DisplayTransform.fit(LARGE_IMAGE_SHAPE, MAX_DISPLAY_SIDE)
+    display_height, display_width = transform.display_shape(LARGE_IMAGE_SHAPE)
+    display_points = [(0, 0), (display_height - 1, display_width - 1), (123, 456), (377, 999)]
+
+    for display_point in display_points:
+        image_point = transform.to_image_point(display_point)
+
+        assert 0 <= image_point[0] < LARGE_IMAGE_SHAPE[0]
+        assert 0 <= image_point[1] < LARGE_IMAGE_SHAPE[1]
+        assert transform.to_display_point(image_point) == display_point
+
+
+def test_image_to_display_to_image_round_trip_is_within_one_display_pixel():
+    transform = mp.DisplayTransform.fit(LARGE_IMAGE_SHAPE, MAX_DISPLAY_SIDE)
+    image_pixels_per_display_pixel = 1 / transform.scale
+    image_point = (1500, 2017)
+
+    recovered = transform.to_image_point(transform.to_display_point(image_point))
+
+    assert abs(recovered[0] - image_point[0]) <= image_pixels_per_display_pixel
+    assert abs(recovered[1] - image_point[1]) <= image_pixels_per_display_pixel
+
+
+def test_display_brush_radius_maps_to_full_resolution_radius():
+    transform = mp.DisplayTransform(scale=0.25)
+
+    assert transform.to_image_radius(BRUSH_RADIUS) == BRUSH_RADIUS * 4
+
+
+def test_shrink_mask_uses_nearest_neighbor_and_display_shape():
+    transform = mp.DisplayTransform(scale=0.5)
+    mask = blank_mask()
+    mask[:, : IMAGE_SHAPE[1] // 2] = True
+
+    shrunk = transform.shrink_mask(mask)
+
+    assert shrunk.shape == transform.display_shape(IMAGE_SHAPE) and shrunk.dtype == bool
+    assert shrunk[:, : IMAGE_SHAPE[1] // 4].all() and not shrunk[:, IMAGE_SHAPE[1] // 4 :].any()
