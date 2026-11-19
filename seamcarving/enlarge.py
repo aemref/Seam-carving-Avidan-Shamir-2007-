@@ -112,19 +112,27 @@ def enlarge_width(
     """Widen an image by k columns with the k-seam insertion method.
 
     img: (H, W) or (H, W, C). Returns (H, W + k[, C]) with the same dtype.
-    Works in steps: step = max(1, min(remaining, floor(max_step * current width))). Each step
-    finds the first `step` seams that carve.shrink_width would remove and duplicates all of
-    them at once. energy_fn and seam_fn are passed to carve.shrink_width unchanged.
+    Works in steps: step = max(1, min(remaining, floor(max_step * current width), width - 1)).
+    The width - 1 cap keeps shrink_width from being asked to remove every column (possible
+    with max_step=1.0); what is left is added in the next step. Each step finds the first
+    `step` seams that carve.shrink_width would remove and duplicates all of them at once.
+    energy_fn and seam_fn are passed to carve.shrink_width unchanged.
+    Raises ValueError if k > 0 and the image has a single column (no seam can be found).
     """
     if k < 0:
         raise ValueError(f"k must be >= 0, got {k}")
     if not 0 < max_step <= 1:
         raise ValueError(f"max_step must be in (0, 1], got {max_step}")
+    if k > 0 and img.shape[1] < 2:
+        raise ValueError(
+            "cannot enlarge an image that is 1 pixel wide (1 pixel high for enlarge_height): "
+            "seam insertion needs at least 2 columns"
+        )
     cur = img.copy()
     remaining = int(k)
     while remaining > 0:
         width = cur.shape[1]
-        step = max(1, min(remaining, math.floor(max_step * width)))
+        step = max(1, min(remaining, math.floor(max_step * width), width - 1))
         res = carve.shrink_width(cur, step, energy_fn=energy_fn, seam_fn=seam_fn)
         cur = insert_vertical_seams(cur, res.removed)
         remaining -= step
