@@ -221,3 +221,67 @@ def test_load_mask_reads_dir_at_call_time(dirs, photo, tmp_path, monkeypatch):
     assert common.load_mask(photo) is None
     monkeypatch.setattr(common, "MASKS_DIR", other)
     assert common.load_mask(photo).all()
+
+
+# --- save_figure -------------------------------------------------------------
+
+
+def read_back(path):
+    return cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+
+
+def test_save_figure_writes_png_and_creates_dir(dirs, no_path_io):
+    rng = np.random.default_rng(0)
+    img = rng.integers(0, 256, size=(5, 7, 3), dtype=np.uint8)
+    before = img.copy()
+    path = common.save_figure("d0_test_ğüş", img)
+    assert path == dirs["FIG_DIR"] / "d0_test_ğüş.png"
+    assert path.is_file()
+    np.testing.assert_array_equal(read_back(path), img)
+    np.testing.assert_array_equal(img, before)
+
+
+def test_save_figure_gray_and_bgra(dirs):
+    gray = np.arange(12, dtype=np.uint8).reshape(3, 4)
+    np.testing.assert_array_equal(read_back(common.save_figure("gray", gray)), gray)
+    bgra = np.zeros((3, 4, 4), dtype=np.uint8)
+    bgra[..., 3] = 255
+    np.testing.assert_array_equal(read_back(common.save_figure("bgra", bgra)), bgra)
+
+
+def test_save_figure_converts_dtypes(dirs):
+    floats = np.array([[-3.0, 0.4, 0.5, 1.5, 254.6, 300.0]])
+    out = read_back(common.save_figure("floats", floats))
+    np.testing.assert_array_equal(out, [[0, 0, 0, 2, 255, 255]])  # rint rounds half to even
+    ints = np.array([[-1, 7, 256]], dtype=np.int64)
+    np.testing.assert_array_equal(read_back(common.save_figure("ints", ints)), [[0, 7, 255]])
+    mask = np.array([[True, False]])
+    np.testing.assert_array_equal(read_back(common.save_figure("mask", mask)), [[255, 0]])
+
+
+def test_save_figure_is_deterministic(dirs):
+    img = np.random.default_rng(0).random((16, 16, 3)) * 255
+    first = common.save_figure("det", img).read_bytes()
+    second = common.save_figure("det", img).read_bytes()
+    assert first == second
+
+
+def test_save_figure_errors(dirs):
+    img = np.zeros((2, 2), np.uint8)
+    for name in ("", "sub/fig", "sub\\fig", "fig.png", ".."):
+        with pytest.raises(ValueError, match="name"):
+            common.save_figure(name, img)
+    for bad in (np.zeros((2, 2, 2), np.uint8), np.zeros((2,), np.uint8), np.zeros((0, 3))):
+        with pytest.raises(ValueError, match="expected"):
+            common.save_figure("bad", bad)
+    with pytest.raises(ValueError, match="NaN"):
+        common.save_figure("nan", np.array([[np.nan, 1.0]]))
+    with pytest.raises(ValueError, match="dtype"):
+        common.save_figure("complex", np.zeros((2, 2), complex))
+    assert not dirs["FIG_DIR"].exists() or not any(dirs["FIG_DIR"].iterdir())
+
+
+def test_save_figure_reads_dir_at_call_time(dirs, tmp_path, monkeypatch):
+    other = tmp_path / "other_figs"
+    monkeypatch.setattr(common, "FIG_DIR", other)
+    assert common.save_figure("x", np.zeros((2, 2), np.uint8)) == other / "x.png"

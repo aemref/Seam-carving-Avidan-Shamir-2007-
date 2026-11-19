@@ -104,9 +104,54 @@ def load_mask(image_path: str | Path, kind: str = "remove") -> np.ndarray | None
     return mask
 
 
+def _output_path(folder: str | Path, name: str, suffix: str) -> Path:
+    """Return ``folder/<name><suffix>``, creating ``folder``; ``name`` is a bare file stem."""
+    if not name or "/" in name or "\\" in name or name in (".", ".."):
+        raise ValueError(f"name must be a plain file name without folders, got {name!r}")
+    if name.lower().endswith(suffix):
+        raise ValueError(f"name must not include the {suffix} extension, got {name!r}")
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder / f"{name}{suffix}"
+
+
+def _to_uint8(img: np.ndarray) -> np.ndarray:
+    """Convert an image array to uint8: bool -> 0/255, other numbers -> clip(rint(x), 0, 255)."""
+    img = np.asarray(img)
+    if img.dtype == np.uint8:
+        return img
+    if img.dtype == np.bool_:
+        return img.astype(np.uint8) * 255
+    if not (np.issubdtype(img.dtype, np.integer) or np.issubdtype(img.dtype, np.floating)):
+        raise ValueError(f"cannot save an image of dtype {img.dtype}")
+    values = img.astype(np.float64)
+    if not np.isfinite(values).all():
+        raise ValueError("image contains NaN or inf")
+    return np.clip(np.rint(values), 0, 255).astype(np.uint8)
+
+
 def save_figure(name: str, img: np.ndarray) -> Path:
-    """Write ``results/figures/<name>.png`` and return its path."""
-    raise NotImplementedError
+    """Write ``img`` as ``FIG_DIR/<name>.png`` (lossless) and return the written path.
+
+    ``img`` is ``(H, W)`` gray, ``(H, W, 3)`` BGR or ``(H, W, 4)`` BGRA. A matplotlib RGBA
+    buffer must be converted to BGR(A) first. Non-uint8 input is converted, never rescaled:
+    bool becomes 0/255 and numbers become ``np.clip(np.rint(x), 0, 255)``, so a float image
+    in [0, 1] must be multiplied by 255 by the caller. ``name`` is a file stem without
+    folders or extension, e.g. ``"d2_shrink_manzara_01_emre_25"``. The folder is created
+    if needed and an existing file is overwritten; the same input gives the same bytes.
+    Works with non-ASCII paths. Raises ``ValueError`` for a bad name, shape or dtype.
+    """
+    arr = _to_uint8(img)
+    if arr.size == 0 or not (arr.ndim == 2 or (arr.ndim == 3 and arr.shape[2] in (3, 4))):
+        raise ValueError(
+            f"expected a non-empty (H, W), (H, W, 3) or (H, W, 4) image, got {arr.shape}"
+        )
+    path = _output_path(FIG_DIR, name, ".png")
+    ok, buf = cv2.imencode(".png", np.ascontiguousarray(arr))
+    if not ok:
+        raise ValueError(f"OpenCV could not encode {path.name}")
+    buf.tofile(path)
+    return path
 
 
 def save_table(name: str, rows: Iterable[Sequence], header: Sequence[str]) -> Path:
