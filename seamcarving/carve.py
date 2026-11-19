@@ -93,7 +93,38 @@ def shrink_width(
     carry:     arrays with leading shape (H, W) that are cut with the same seams.
     Returns a ShrinkResult with image (H, W-k[, C]) and removed/order (H, W).
     """
-    raise NotImplementedError
+    img, k, carry = _check_inputs(img, k, carry)
+    if energy_fn is None:
+        from seamcarving.energy import compute_energy
+
+        def energy_fn(im: np.ndarray, _carry: tuple) -> np.ndarray:
+            return compute_energy(im)
+
+    if seam_fn is None:
+        from seamcarving.seam import find_vertical_seam
+
+        seam_fn = find_vertical_seam
+
+    h, w = img.shape[:2]
+    rows = np.arange(h)
+    # idx[r, c] = original column of the pixel currently at (r, c).
+    idx = np.tile(np.arange(w, dtype=np.int64), (h, 1))
+    order = np.full((h, w), -1, dtype=np.int32)
+    cur = img.copy()
+    cur_carry = tuple(a.copy() for a in carry)
+
+    for t in range(k):
+        cur_w = w - t
+        energy = np.asarray(energy_fn(cur, cur_carry))
+        if energy.shape != (h, cur_w):
+            raise ValueError(f"energy_fn must return shape ({h}, {cur_w}), got {energy.shape}")
+        seam = _check_seam(seam_fn(energy), h, cur_w)
+        order[rows, idx[rows, seam]] = t
+        idx = remove_vertical_seam(idx, seam)
+        cur = remove_vertical_seam(cur, seam)
+        cur_carry = tuple(remove_vertical_seam(a, seam) for a in cur_carry)
+
+    return ShrinkResult(cur, cur_carry, order >= 0, order)
 
 
 def shrink_height(
