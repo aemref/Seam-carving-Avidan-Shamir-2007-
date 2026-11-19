@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 MASK_PAINTER_PATH = Path(__file__).resolve().parent.parent / "tools" / "mask_painter.py"
 
@@ -82,3 +83,109 @@ def test_stroke_entirely_outside_image_paints_nothing():
     painted = mp.paint_stroke(blank_mask(), far_away, BRUSH_RADIUS)
 
     assert not painted.any()
+
+
+def test_session_stroke_paints_disk_on_chosen_layer_only():
+    session = mp.PaintSession.blank(IMAGE_SHAPE)
+
+    session.begin_stroke(mp.MaskLayer.REMOVE, CENTER, BRUSH_RADIUS)
+    session.end_stroke()
+
+    np.testing.assert_array_equal(
+        session.mask(mp.MaskLayer.REMOVE), pixels_within(BRUSH_RADIUS, CENTER)
+    )
+    assert not session.mask(mp.MaskLayer.PROTECT).any()
+
+
+def test_extending_a_stroke_connects_successive_mouse_positions():
+    session = mp.PaintSession.blank(IMAGE_SHAPE)
+
+    session.begin_stroke(mp.MaskLayer.PROTECT, (10, 5), 1)
+    session.extend_stroke((10, 50))
+    session.end_stroke()
+
+    assert session.mask(mp.MaskLayer.PROTECT)[10, 5:51].all()
+
+
+def test_remove_and_protect_layers_are_independent():
+    session = mp.PaintSession.blank(IMAGE_SHAPE)
+    session.begin_stroke(mp.MaskLayer.REMOVE, CENTER, BRUSH_RADIUS)
+    remove_before = session.mask(mp.MaskLayer.REMOVE).copy()
+
+    session.begin_stroke(mp.MaskLayer.PROTECT, CENTER, BRUSH_RADIUS + 3)
+
+    np.testing.assert_array_equal(session.mask(mp.MaskLayer.REMOVE), remove_before)
+    assert session.mask(mp.MaskLayer.PROTECT)[CENTER]
+
+
+def test_undo_restores_state_before_last_stroke_exactly():
+    session = mp.PaintSession.blank(IMAGE_SHAPE)
+    session.begin_stroke(mp.MaskLayer.REMOVE, (10, 10), BRUSH_RADIUS)
+    session.end_stroke()
+    remove_before = session.mask(mp.MaskLayer.REMOVE).copy()
+    protect_before = session.mask(mp.MaskLayer.PROTECT).copy()
+    session.begin_stroke(mp.MaskLayer.REMOVE, (30, 50), BRUSH_RADIUS)
+    session.extend_stroke((5, 5))
+    session.end_stroke()
+
+    session.undo()
+
+    np.testing.assert_array_equal(session.mask(mp.MaskLayer.REMOVE), remove_before)
+    np.testing.assert_array_equal(session.mask(mp.MaskLayer.PROTECT), protect_before)
+
+
+def test_undo_with_empty_history_is_harmless():
+    session = mp.PaintSession.blank(IMAGE_SHAPE)
+
+    session.undo()
+
+    assert not session.mask(mp.MaskLayer.REMOVE).any()
+
+
+def test_clear_empties_both_masks_and_is_undoable():
+    session = mp.PaintSession.blank(IMAGE_SHAPE)
+    session.begin_stroke(mp.MaskLayer.REMOVE, (10, 10), BRUSH_RADIUS)
+    session.begin_stroke(mp.MaskLayer.PROTECT, (30, 40), BRUSH_RADIUS)
+    painted_remove = session.mask(mp.MaskLayer.REMOVE).copy()
+
+    session.clear()
+    cleared_anything = any(session.mask(layer).any() for layer in mp.MaskLayer)
+    session.undo()
+
+    assert not cleared_anything
+    np.testing.assert_array_equal(session.mask(mp.MaskLayer.REMOVE), painted_remove)
+    assert session.mask(mp.MaskLayer.PROTECT).any()
+
+
+def test_session_copies_input_masks():
+    remove_mask = blank_mask()
+    session = mp.PaintSession(remove_mask, blank_mask())
+
+    session.begin_stroke(mp.MaskLayer.REMOVE, CENTER, BRUSH_RADIUS)
+
+    assert not remove_mask.any()
+
+
+def test_exposed_mask_is_read_only():
+    session = mp.PaintSession.blank(IMAGE_SHAPE)
+
+    with pytest.raises(ValueError):
+        session.mask(mp.MaskLayer.REMOVE)[CENTER] = True
+
+
+def test_unsaved_changes_follow_painting_saving_and_undo():
+    session = mp.PaintSession.blank(IMAGE_SHAPE)
+    session.begin_stroke(mp.MaskLayer.REMOVE, CENTER, BRUSH_RADIUS)
+    dirty_after_stroke = session.has_unsaved_changes()
+
+    session.mark_saved()
+    clean_after_save = not session.has_unsaved_changes()
+    session.undo()
+
+    assert dirty_after_stroke and clean_after_save
+    assert session.has_unsaved_changes()
+
+
+def test_session_rejects_masks_of_different_shapes():
+    with pytest.raises(ValueError, match="shapes differ"):
+        mp.PaintSession(blank_mask(), np.zeros((1, 1), dtype=bool))

@@ -2,13 +2,32 @@
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Sequence
+from dataclasses import dataclass
+from enum import Enum
 from itertools import pairwise
 
 import numpy as np
 
 Point = tuple[float, float]
 """A (row, col) position; may lie outside the image while the mouse is dragged off it."""
+
+GREEN_BGR = (0, 255, 0)
+RED_BGR = (0, 0, 255)
+
+MAX_UNDO_STEPS = 50
+
+
+class MaskLayer(Enum):
+    """The two masks a user can paint, with their file suffix and overlay color."""
+
+    REMOVE = ("remove", GREEN_BGR)
+    PROTECT = ("protect", RED_BGR)
+
+    def __init__(self, file_suffix: str, color_bgr: tuple[int, int, int]) -> None:
+        self.file_suffix = file_suffix
+        self.color_bgr = color_bgr
 
 
 def paint_stroke(mask: np.ndarray, points: Sequence[Point], radius: float) -> np.ndarray:
@@ -61,3 +80,111 @@ def _squared_distance_to_segment(
     else:
         along = np.clip((offset_r * step_r + offset_c * step_c) / length_sq, 0.0, 1.0)
     return (offset_r - along * step_r) ** 2 + (offset_c - along * step_c) ** 2
+
+
+@dataclass
+class _ActiveStroke:
+    layer: MaskLayer
+    radius: float
+    last_point: Point
+
+
+@dataclass(frozen=True)
+class _PackedMasks:
+    """Bit-packed copy of both masks, so a long undo history stays small in memory."""
+
+    shape: tuple[int, int]
+    bits: dict[MaskLayer, np.ndarray]
+
+    @classmethod
+    def pack(cls, masks: dict[MaskLayer, np.ndarray]) -> _PackedMasks:
+        some_mask = next(iter(masks.values()))
+        return cls(some_mask.shape, {layer: np.packbits(m) for layer, m in masks.items()})
+
+    def unpack(self) -> dict[MaskLayer, np.ndarray]:
+        pixel_count = self.shape[0] * self.shape[1]
+        return {
+            layer: np.unpackbits(bits, count=pixel_count).reshape(self.shape).astype(bool)
+            for layer, bits in self.bits.items()
+        }
+
+
+class PaintSession:
+    """Editable REMOVE/PROTECT mask pair with stroke painting, undo and clear.
+
+    Pure NumPy state: it knows nothing about windows or files. All points and radii
+    are in full-resolution image coordinates. Painting one layer never touches the
+    other; the seam carving algorithm resolves overlap ("protection wins").
+    """
+
+    def __init__(self, remove_mask: np.ndarray, protect_mask: np.ndarray) -> None:
+        """Start a session from two (H, W) masks (copied; any nonzero counts as marked)."""
+        if remove_mask.shape != protect_mask.shape:
+            raise ValueError(
+                f"mask shapes differ: remove {remove_mask.shape}, protect {protect_mask.shape}"
+            )
+        self._masks = {
+            MaskLayer.REMOVE: remove_mask.astype(bool, copy=True),
+            MaskLayer.PROTECT: protect_mask.astype(bool, copy=True),
+        }
+        self._undo_stack: deque[_PackedMasks] = deque(maxlen=MAX_UNDO_STEPS)
+        self._stroke: _ActiveStroke | None = None
+        self._saved_masks = self._copy_masks()
+
+    @classmethod
+    def blank(cls, shape: tuple[int, int]) -> PaintSession:
+        """Start a session with two empty (H, W) masks."""
+        return cls(np.zeros(shape, dtype=bool), np.zeros(shape, dtype=bool))
+
+    def mask(self, layer: MaskLayer) -> np.ndarray:
+        """Return a read-only (H, W) bool view of one layer's current mask."""
+        view = self._masks[layer].view()
+        view.flags.writeable = False
+        return view
+
+    def begin_stroke(self, layer: MaskLayer, point: Point, radius: float) -> None:
+        """Start a new undoable stroke on ``layer`` and paint a dot at ``point``."""
+        self._push_undo_state()
+        self._stroke = _ActiveStroke(layer, radius, point)
+        _stamp_segment(self._masks[layer], point, point, radius)
+
+    def extend_stroke(self, point: Point) -> None:
+        """Paint from the stroke's last point to ``point``; ignored outside a stroke."""
+        if self._stroke is None:
+            return
+        stroke = self._stroke
+        _stamp_segment(self._masks[stroke.layer], stroke.last_point, point, stroke.radius)
+        stroke.last_point = point
+
+    def end_stroke(self) -> None:
+        self._stroke = None
+
+    def undo(self) -> None:
+        """Restore both masks to before the last stroke or clear; no-op if none."""
+        self.end_stroke()
+        if self._undo_stack:
+            self._masks = self._undo_stack.pop().unpack()
+
+    def clear(self) -> None:
+        """Empty both masks as one undoable step; no-op if both are already empty."""
+        self.end_stroke()
+        if not any(mask.any() for mask in self._masks.values()):
+            return
+        self._push_undo_state()
+        self._masks = {layer: np.zeros_like(mask) for layer, mask in self._masks.items()}
+
+    def mark_saved(self) -> None:
+        """Record the current masks as the state that is on disk."""
+        self._saved_masks = self._copy_masks()
+
+    def has_unsaved_changes(self) -> bool:
+        return any(
+            not np.array_equal(self._masks[layer], self._saved_masks[layer])
+            for layer in MaskLayer
+        )
+
+    def _push_undo_state(self) -> None:
+        self._undo_stack.append(_PackedMasks.pack(self._masks))
+
+    def _copy_masks(self) -> dict[MaskLayer, np.ndarray]:
+        return {layer: mask.copy() for layer, mask in self._masks.items()}
