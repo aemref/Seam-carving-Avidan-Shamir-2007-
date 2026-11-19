@@ -3,8 +3,11 @@
 import numpy as np
 import pytest
 
+from seamcarving import enlarge
 from seamcarving.carve import ShrinkResult
 from seamcarving.enlarge import (
+    enlarge_height,
+    enlarge_width,
     insert_vertical_seams,
     inserted_mask,
 )
@@ -190,3 +193,94 @@ def test_inserted_mask_matches_inserted_values():
 def test_inserted_mask_unequal_counts_raises():
     with pytest.raises(ValueError):
         inserted_mask(np.array([[True, True], [True, False]]))
+
+
+# ---------------------------------------------------------------- enlarge_width (fake carve)
+
+
+@pytest.mark.parametrize("tail", [(), (3,)])
+def test_enlarge_width_shape_with_fake(recorded, tail):
+    rng = np.random.default_rng(4)
+    img = rng.integers(0, 256, size=(5, 10, *tail), dtype=np.uint8)
+    out = enlarge_width(img, 4)
+    assert out.shape == (5, 14, *tail)
+    assert out.dtype == np.uint8
+
+
+def test_enlarge_width_single_step(recorded):
+    img = np.zeros((3, 10), dtype=np.uint8)
+    enlarge_width(img, 4, max_step=0.5)  # floor(0.5 * 10) = 5 >= 4
+    assert [c["k"] for c in recorded] == [4]
+
+
+@pytest.mark.parametrize(
+    ("w", "k", "max_step", "steps"),
+    [
+        (10, 12, 0.5, [5, 7]),  # 10 -> 15 (floor 7.5 = 7) -> 22
+        (10, 6, 0.2, [2, 2, 2]),  # floor(2.0), floor(2.4), floor(2.8)
+        (10, 3, 0.05, [1, 1, 1]),  # floor(0.5) = 0 -> at least 1
+        (8, 10, 0.75, [6, 4]),  # floor(6.0) = 6, then min(4, floor(10.5))
+    ],
+)
+def test_enlarge_width_multi_step(recorded, w, k, max_step, steps):
+    img = np.zeros((4, w, 3), dtype=np.uint8)
+    out = enlarge_width(img, k, max_step=max_step)
+    assert [c["k"] for c in recorded] == steps
+    assert [c["width"] for c in recorded] == list(w + np.cumsum([0] + steps[:-1]))
+    assert out.shape == (4, w + k, 3)
+
+
+def test_enlarge_width_values_with_fake(recorded):
+    img = np.array([[0, 10, 20, 30]], dtype=np.uint8)
+    out = enlarge_width(img, 2)  # fake removes cols 0 and 2
+    np.testing.assert_array_equal(out, [[0, 5, 10, 20, 25, 30]])
+
+
+def test_enlarge_width_passes_callbacks(recorded):
+    def energy_fn(img, carry):
+        return np.zeros(img.shape[:2])
+
+    def seam_fn(energy):
+        return np.zeros(energy.shape[0], dtype=np.int64)
+
+    enlarge_width(np.zeros((2, 6), dtype=np.uint8), 2, energy_fn, seam_fn)
+    assert recorded[0]["energy_fn"] is energy_fn
+    assert recorded[0]["seam_fn"] is seam_fn
+
+
+def test_enlarge_width_k0_returns_copy(recorded):
+    img = np.arange(20, dtype=np.uint8).reshape(4, 5)
+    out = enlarge_width(img, 0)
+    np.testing.assert_array_equal(out, img)
+    assert out is not img
+    assert recorded == []
+
+
+def test_enlarge_width_does_not_modify_input(recorded):
+    img = np.arange(30, dtype=np.uint8).reshape(3, 10)
+    before = img.copy()
+    enlarge_width(img, 7)
+    np.testing.assert_array_equal(img, before)
+
+
+@pytest.mark.parametrize(("k", "max_step"), [(-1, 0.5), (2, 0.0), (2, -0.5), (2, 1.5)])
+def test_enlarge_width_invalid_arguments(recorded, k, max_step):
+    with pytest.raises(ValueError):
+        enlarge_width(np.zeros((2, 4), dtype=np.uint8), k, max_step=max_step)
+
+
+# ------------------------------------------------------- enlarge_height / amplify (fake carve)
+
+
+def test_enlarge_height_matches_transposed_width(recorded):
+    rng = np.random.default_rng(5)
+    img = rng.integers(0, 256, size=(8, 5, 3), dtype=np.uint8)
+    out = enlarge_height(img, 3)
+    assert out.shape == (11, 5, 3)
+    expected = np.swapaxes(enlarge_width(np.swapaxes(img, 0, 1), 3), 0, 1)
+    np.testing.assert_array_equal(out, expected)
+
+
+def test_enlarge_uses_carve_module_attribute():
+    # enlarge must call carve.shrink_width at call time so tests can monkeypatch it
+    assert enlarge.carve.__name__ == "seamcarving.carve"

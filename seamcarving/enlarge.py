@@ -6,8 +6,11 @@ all of them at once. Repeatedly inserting the single best seam would pick the sa
 and again and produce a stretched band.
 """
 
+import math
+
 import numpy as np
 
+from seamcarving import carve
 from seamcarving.types import EnergyFn, SeamFn
 
 
@@ -105,8 +108,26 @@ def enlarge_width(
     seam_fn: SeamFn | None = None,
     max_step: float = 0.5,
 ) -> np.ndarray:
-    """Widen the image by k columns, at most ``max_step`` of the current width per stage."""
-    raise NotImplementedError
+    """Widen an image by k columns with the k-seam insertion method.
+
+    img: (H, W) or (H, W, C). Returns (H, W + k[, C]) with the same dtype.
+    Works in steps: step = max(1, min(remaining, floor(max_step * current width))). Each step
+    finds the first `step` seams that carve.shrink_width would remove and duplicates all of
+    them at once. energy_fn and seam_fn are passed to carve.shrink_width unchanged.
+    """
+    if k < 0:
+        raise ValueError(f"k must be >= 0, got {k}")
+    if not 0 < max_step <= 1:
+        raise ValueError(f"max_step must be in (0, 1], got {max_step}")
+    cur = img.copy()
+    remaining = int(k)
+    while remaining > 0:
+        width = cur.shape[1]
+        step = max(1, min(remaining, math.floor(max_step * width)))
+        res = carve.shrink_width(cur, step, energy_fn=energy_fn, seam_fn=seam_fn)
+        cur = insert_vertical_seams(cur, res.removed)
+        remaining -= step
+    return cur
 
 
 def enlarge_height(
@@ -116,8 +137,14 @@ def enlarge_height(
     seam_fn: SeamFn | None = None,
     max_step: float = 0.5,
 ) -> np.ndarray:
-    """Heighten the image by k rows, at most ``max_step`` of the current height per stage."""
-    raise NotImplementedError
+    """Make an image k rows taller by inserting horizontal seams.
+
+    img: (H, W) or (H, W, C). Returns (H + k, W[, C]) with the same dtype.
+    Rows and columns are swapped (the channel axis stays last), enlarge_width is called and
+    the result is swapped back. energy_fn and seam_fn therefore see transposed images.
+    """
+    out_t = enlarge_width(np.swapaxes(img, 0, 1), k, energy_fn, seam_fn, max_step)
+    return np.ascontiguousarray(np.swapaxes(out_t, 0, 1))
 
 
 def amplify_content(
