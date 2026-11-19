@@ -117,4 +117,11 @@ def remove_columns(img: np.ndarray, k: int, energy: np.ndarray | None = None) ->
     with the remaining columns in their original order. Ties remove the leftmost column
     first (stable sort).
     """
-    raise NotImplementedError
+    img = _check_image(img)
+    energy = _get_energy(img, energy)
+    w = img.shape[1]
+    k = _check_k(k, w)
+    drop = np.argsort(energy.sum(axis=0), kind="stable")[:k]
+    keep = np.ones(w, dtype=bool)
+    keep[drop] = False
+    return img[:, keep].copy()

@@ -7,6 +7,7 @@ import pytest
 from seamcarving.baselines import (
     best_crop,
     center_crop,
+    remove_columns,
     scale,
 )
 
@@ -132,3 +133,39 @@ def test_best_crop_full_size_and_invalid():
         best_crop(img, 6, 6, energy=energy)
     with pytest.raises(ValueError):
         best_crop(img, 3, 3, energy=np.ones((5, 5)))
+
+
+# remove_columns -----------------------------------------------------------------
+
+
+@pytest.mark.parametrize("channels", [None, 3])
+def test_remove_columns_removes_lowest_energy_columns(channels):
+    h, w = 5, 8
+    img = make_image(h, w, channels)
+    col_energy = np.array([5.0, 1.0, 7.0, 0.5, 9.0, 2.0, 8.0, 6.0])
+    energy = np.tile(col_energy, (h, 1))
+    out = remove_columns(img, 3, energy=energy)
+    assert out.shape == (h, w - 3) + img.shape[2:]
+    assert out.dtype == img.dtype
+    # Lowest sums: columns 3, 1, 5; the rest stay in order.
+    np.testing.assert_array_equal(out, img[:, [0, 2, 4, 6, 7]])
+
+
+def test_remove_columns_tie_and_k_zero():
+    img = make_image(4, 6)
+    energy = np.ones((4, 6))
+    np.testing.assert_array_equal(remove_columns(img, 2, energy=energy), img[:, 2:])
+    out = remove_columns(img, 0, energy=energy)
+    np.testing.assert_array_equal(out, img)
+    assert not np.shares_memory(out, img)
+
+
+@pytest.mark.parametrize("k", [-1, 6, 7])
+def test_remove_columns_invalid_k(k):
+    with pytest.raises(ValueError):
+        remove_columns(make_image(4, 6), k, energy=np.ones((4, 6)))
+
+
+def test_remove_columns_bad_energy_shape():
+    with pytest.raises(ValueError):
+        remove_columns(make_image(4, 6), 1, energy=np.ones((4, 5)))
