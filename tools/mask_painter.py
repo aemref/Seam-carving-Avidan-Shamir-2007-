@@ -16,6 +16,11 @@ Point = tuple[float, float]
 GREEN_BGR = (0, 255, 0)
 RED_BGR = (0, 0, 255)
 
+MIN_BRUSH_RADIUS = 1
+MAX_BRUSH_RADIUS = 150
+DEFAULT_BRUSH_RADIUS = 12
+BRUSH_GROWTH_FACTOR = 1.25
+
 MAX_UNDO_STEPS = 50
 
 
@@ -188,3 +193,13 @@ class PaintSession:
 
     def _copy_masks(self) -> dict[MaskLayer, np.ndarray]:
         return {layer: mask.copy() for layer, mask in self._masks.items()}
+
+
+def larger_brush_radius(radius: int) -> int:
+    """Next brush radius up (about +25 %, at least +1), clamped to MAX_BRUSH_RADIUS."""
+    return min(max(radius + 1, round(radius * BRUSH_GROWTH_FACTOR)), MAX_BRUSH_RADIUS)
+
+
+def smaller_brush_radius(radius: int) -> int:
+    """Next brush radius down (about -20 %, at least -1), clamped to MIN_BRUSH_RADIUS."""
+    return max(min(radius - 1, round(radius / BRUSH_GROWTH_FACTOR)), MIN_BRUSH_RADIUS)

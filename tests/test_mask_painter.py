@@ -189,3 +189,13 @@ def test_unsaved_changes_follow_painting_saving_and_undo():
 def test_session_rejects_masks_of_different_shapes():
     with pytest.raises(ValueError, match="shapes differ"):
         mp.PaintSession(blank_mask(), np.zeros((1, 1), dtype=bool))
+
+
+def test_brush_radius_steps_up_and_down():
+    assert mp.larger_brush_radius(mp.DEFAULT_BRUSH_RADIUS) > mp.DEFAULT_BRUSH_RADIUS
+    assert mp.smaller_brush_radius(mp.DEFAULT_BRUSH_RADIUS) < mp.DEFAULT_BRUSH_RADIUS
+
+
+def test_brush_radius_is_clamped_to_limits():
+    assert mp.smaller_brush_radius(mp.MIN_BRUSH_RADIUS) == mp.MIN_BRUSH_RADIUS
+    assert mp.larger_brush_radius(mp.MAX_BRUSH_RADIUS) == mp.MAX_BRUSH_RADIUS
