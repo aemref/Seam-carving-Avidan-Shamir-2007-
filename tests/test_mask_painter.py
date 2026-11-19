@@ -428,3 +428,10 @@ def test_load_unreadable_image_raises_clear_error(tmp_path):
 
     with pytest.raises(mp.MaskPainterError, match="cannot read image"):
         mp.load_image(not_an_image)
+
+
+def test_main_reports_missing_image_with_nonzero_exit(tmp_path, capsys):
+    exit_code = mp.main([str(tmp_path / "missing.jpg")])
+
+    assert exit_code != 0
+    assert "image not found" in capsys.readouterr().err

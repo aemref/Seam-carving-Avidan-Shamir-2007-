@@ -1,9 +1,28 @@
-"""Paint object-removal and protection masks for seam carving with the mouse."""
+"""Paint object-removal and protection masks for seam carving with the mouse.
+
+Usage:
+    python tools/mask_painter.py data/images/<category>_<nn>_<name>.jpg [--mask-dir DIR]
+
+Left-drag paints the REMOVE mask (green), right-drag or Shift+left-drag paints the
+PROTECT mask (red). Keys: ``[``/``]`` brush size, ``u`` undo, ``c`` clear, ``s`` save,
+``q``/Esc quit. With unsaved changes the first quit only prints a warning; a second
+consecutive quit press leaves without saving.
+
+Masks are stored as ``<mask-dir>/<image-stem>_remove.png`` and ``..._protect.png``:
+single-channel 0/255 PNGs with the image's height and width. In memory they are
+(H, W) bool arrays. Large photos are shown scaled down, but painting always happens
+on the full-resolution masks.
+
+The painting core (PaintSession, paint_stroke, render_overlay, DisplayTransform and
+the file helpers) is pure and unit tested; only MaskPainterWindow touches the GUI.
+"""
 
 from __future__ import annotations
 
+import argparse
+import sys
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from itertools import pairwise
@@ -17,6 +36,8 @@ Point = tuple[float, float]
 
 GREEN_BGR = (0, 255, 0)
 RED_BGR = (0, 0, 255)
+WHITE_BGR = (255, 255, 255)
+BLACK_BGR = (0, 0, 0)
 OVERLAY_ALPHA = 0.45
 
 MIN_BRUSH_RADIUS = 1
@@ -25,9 +46,31 @@ DEFAULT_BRUSH_RADIUS = 12
 BRUSH_GROWTH_FACTOR = 1.25
 
 MAX_UNDO_STEPS = 50
+DEFAULT_MAX_DISPLAY_SIDE = 1000
 MASK_ON_VALUE = 255
 MASK_FILE_EXTENSION = ".png"
 MASKS_DIR_NAME = "masks"
+
+FRAME_DELAY_MS = 15
+KEY_CODE_MASK = 0xFF
+KEY_ESCAPE = 27
+KEY_BRUSH_SMALLER = ord("[")
+KEY_BRUSH_LARGER = ord("]")
+KEY_UNDO = ord("u")
+KEY_CLEAR = ord("c")
+KEY_SAVE = ord("s")
+KEY_QUIT = ord("q")
+
+HUD_FONT = cv2.FONT_HERSHEY_SIMPLEX
+HUD_FONT_SCALE = 0.45
+HUD_LINE_HEIGHT = 18
+HUD_MARGIN = 6
+HUD_KEY_HELP = "L: remove  R/Shift+L: protect  [ ]: brush  u: undo  c: clear  s: save  q: quit"
+TERMINAL_KEY_HELP = (
+    "Left-drag: paint REMOVE (green) | right-drag or Shift+left-drag: paint PROTECT (red)\n"
+    "[ / ]: brush smaller/larger | u: undo stroke | c: clear both masks (undoable)\n"
+    "s: save masks | q or Esc: quit (press twice to discard unsaved changes)"
+)
 
 
 class MaskPainterError(Exception):
@@ -394,3 +437,197 @@ def save_session(session: PaintSession, paths: MaskPaths) -> dict[Path, SaveOutc
         outcomes[mask_path] = save_mask(session.mask(layer), mask_path)
     session.mark_saved()
     return outcomes
+
+
+class MaskPainterWindow:
+    """Thin OpenCV window and event loop around a PaintSession (not unit tested)."""
+
+    def __init__(
+        self,
+        image: np.ndarray,
+        session: PaintSession,
+        paths: MaskPaths,
+        transform: DisplayTransform,
+    ) -> None:
+        self._session = session
+        self._paths = paths
+        self._transform = transform
+        self._display_image = transform.shrink_image(image)
+        self._window_name = f"mask painter - {paths.image_stem}"
+        self._brush_radius = DEFAULT_BRUSH_RADIUS
+        self._cursor: Point | None = None
+        self._quit_armed = False
+        self._running = True
+        self._needs_redraw = True
+        self._mouse_handlers: dict[int, Callable[[Point, int], None]] = {
+            cv2.EVENT_LBUTTONDOWN: self._on_left_down,
+            cv2.EVENT_RBUTTONDOWN: self._on_right_down,
+            cv2.EVENT_MOUSEMOVE: self._on_mouse_move,
+            cv2.EVENT_LBUTTONUP: self._on_button_up,
+            cv2.EVENT_RBUTTONUP: self._on_button_up,
+        }
+        self._key_actions: dict[int, Callable[[], None]] = {
+            KEY_BRUSH_SMALLER: self._shrink_brush,
+            KEY_BRUSH_LARGER: self._grow_brush,
+            KEY_UNDO: self._session.undo,
+            KEY_CLEAR: self._session.clear,
+            KEY_SAVE: self._save,
+            KEY_QUIT: self._request_quit,
+            KEY_ESCAPE: self._request_quit,
+        }
+
+    def run(self) -> None:
+        """Show the window and process mouse and key events until the user quits."""
+        cv2.namedWindow(self._window_name, cv2.WINDOW_AUTOSIZE)
+        cv2.setMouseCallback(self._window_name, self._on_mouse)
+        print(TERMINAL_KEY_HELP)
+        try:
+            self._event_loop()
+        finally:
+            cv2.destroyAllWindows()
+
+    def _event_loop(self) -> None:
+        while self._running:
+            if self._needs_redraw:
+                cv2.imshow(self._window_name, self._render_frame())
+                self._needs_redraw = False
+            self._handle_key(cv2.waitKey(FRAME_DELAY_MS) & KEY_CODE_MASK)
+            if cv2.getWindowProperty(self._window_name, cv2.WND_PROP_VISIBLE) < 1:
+                self._on_window_closed()
+
+    def _on_mouse(self, event: int, col: int, row: int, flags: int, _param: object) -> None:
+        # OpenCV passes (x, y) = (col, row); from here on we only use (row, col).
+        handler = self._mouse_handlers.get(event)
+        self._cursor = (row, col)
+        self._needs_redraw = True
+        if handler is not None:
+            handler((row, col), flags)
+
+    def _on_left_down(self, display_point: Point, flags: int) -> None:
+        shift_held = bool(flags & cv2.EVENT_FLAG_SHIFTKEY)
+        self._begin_stroke(MaskLayer.PROTECT if shift_held else MaskLayer.REMOVE, display_point)
+
+    def _on_right_down(self, display_point: Point, _flags: int) -> None:
+        self._begin_stroke(MaskLayer.PROTECT, display_point)
+
+    def _on_mouse_move(self, display_point: Point, _flags: int) -> None:
+        self._session.extend_stroke(self._transform.to_image_point(display_point))
+
+    def _on_button_up(self, _display_point: Point, _flags: int) -> None:
+        self._session.end_stroke()
+
+    def _begin_stroke(self, layer: MaskLayer, display_point: Point) -> None:
+        self._quit_armed = False
+        image_radius = self._transform.to_image_radius(self._brush_radius)
+        self._session.begin_stroke(
+            layer, self._transform.to_image_point(display_point), image_radius
+        )
+
+    def _handle_key(self, key: int) -> None:
+        action = self._key_actions.get(key)
+        if action is None:
+            return
+        if action != self._request_quit:
+            self._quit_armed = False
+        action()
+        self._needs_redraw = True
+
+    def _shrink_brush(self) -> None:
+        self._brush_radius = smaller_brush_radius(self._brush_radius)
+
+    def _grow_brush(self) -> None:
+        self._brush_radius = larger_brush_radius(self._brush_radius)
+
+    def _save(self) -> None:
+        for path, outcome in save_session(self._session, self._paths).items():
+            print(f"{outcome.value}: {path}")
+
+    def _request_quit(self) -> None:
+        if self._quit_armed or not self._session.has_unsaved_changes():
+            self._running = False
+            return
+        self._quit_armed = True
+        print("Unsaved changes! Press s to save, or q/Esc again to quit without saving.")
+
+    def _on_window_closed(self) -> None:
+        self._running = False
+        if self._session.has_unsaved_changes():
+            print("Window closed with unsaved changes; masks were NOT saved.")
+
+    def _render_frame(self) -> np.ndarray:
+        """Overlay preview with brush cursor, plus a status strip below (not over) it."""
+        preview = render_overlay(
+            self._display_image,
+            self._transform.shrink_mask(self._session.mask(MaskLayer.REMOVE)),
+            self._transform.shrink_mask(self._session.mask(MaskLayer.PROTECT)),
+        )
+        self._draw_brush_cursor(preview)
+        return np.vstack([preview, self._render_status_strip(preview.shape[1])])
+
+    def _draw_brush_cursor(self, preview: np.ndarray) -> None:
+        if self._cursor is None:
+            return
+        row, col = self._cursor
+        center = (int(col), int(row))
+        cv2.circle(preview, center, self._brush_radius, BLACK_BGR, 3, cv2.LINE_AA)
+        cv2.circle(preview, center, self._brush_radius, WHITE_BGR, 1, cv2.LINE_AA)
+
+    def _render_status_strip(self, width: int) -> np.ndarray:
+        unsaved_note = "  (unsaved changes)" if self._session.has_unsaved_changes() else ""
+        lines = [f"brush radius {self._brush_radius} px{unsaved_note}", HUD_KEY_HELP]
+        strip = np.zeros((HUD_MARGIN + HUD_LINE_HEIGHT * len(lines), width, 3), dtype=np.uint8)
+        for line_number, text in enumerate(lines, start=1):
+            baseline = (HUD_MARGIN, HUD_LINE_HEIGHT * line_number)
+            cv2.putText(strip, text, baseline, HUD_FONT, HUD_FONT_SCALE, WHITE_BGR, 1, cv2.LINE_AA)
+        return strip
+
+
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Paint seam carving masks: REMOVE (left-drag, green) and\n"
+        "PROTECT (right-drag or Shift+left-drag, red).",
+        epilog=TERMINAL_KEY_HELP,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("image", type=Path, help="image to paint on, e.g. data/images/x.jpg")
+    parser.add_argument(
+        "--mask-dir",
+        type=Path,
+        help="folder for <stem>_remove.png / <stem>_protect.png "
+        "(default: the 'masks' folder next to the image's folder)",
+    )
+    parser.add_argument(
+        "--max-display-side",
+        type=int,
+        default=DEFAULT_MAX_DISPLAY_SIDE,
+        help="longest displayed side in pixels; masks are still painted at full "
+        "resolution (default: %(default)s)",
+    )
+    return parser.parse_args(argv)
+
+
+def build_window(args: argparse.Namespace) -> MaskPainterWindow:
+    """Load the image and existing masks; raises MaskPainterError on bad input."""
+    image = load_image(args.image)
+    mask_dir = args.mask_dir if args.mask_dir is not None else default_mask_dir(args.image)
+    paths = MaskPaths.for_image(args.image, mask_dir)
+    session = load_session(paths, image.shape)
+    transform = DisplayTransform.fit(image.shape, args.max_display_side)
+    print(f"image {image.shape[1]}x{image.shape[0]}, display scale {transform.scale:.3f}")
+    print(f"masks: {paths.remove}\n       {paths.protect}")
+    return MaskPainterWindow(image, session, paths, transform)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = parse_args(argv)
+    try:
+        window = build_window(args)
+    except MaskPainterError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    window.run()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
