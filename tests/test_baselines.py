@@ -8,6 +8,7 @@ from seamcarving.baselines import (
     best_crop,
     center_crop,
     remove_columns,
+    remove_pixels_per_row,
     scale,
 )
 
@@ -169,3 +170,35 @@ def test_remove_columns_invalid_k(k):
 def test_remove_columns_bad_energy_shape():
     with pytest.raises(ValueError):
         remove_columns(make_image(4, 6), 1, energy=np.ones((4, 5)))
+
+
+# remove_pixels_per_row ----------------------------------------------------------
+
+
+@pytest.mark.parametrize("channels", [None, 3])
+def test_remove_pixels_per_row_keeps_order(channels):
+    h, w, k = 6, 10, 4
+    img = make_image(h, w, channels)
+    energy = np.random.default_rng(3).random((h, w))
+    out = remove_pixels_per_row(img, k, energy=energy)
+    assert out.shape == (h, w - k) + img.shape[2:]
+    assert out.dtype == img.dtype
+    for r in range(h):
+        dropped = np.argsort(energy[r])[:k]
+        kept = np.setdiff1d(np.arange(w), dropped)  # sorted -> original order
+        np.testing.assert_array_equal(out[r], img[r, kept])
+
+
+def test_remove_pixels_per_row_explicit_and_invalid():
+    img = np.arange(12).reshape(2, 6)
+    energy = np.array([[3.0, 0.0, 5.0, 1.0, 4.0, 2.0],
+                       [0.0, 9.0, 9.0, 9.0, 9.0, 0.0]])
+    np.testing.assert_array_equal(
+        remove_pixels_per_row(img, 2, energy=energy),
+        [[0, 2, 4, 5], [7, 8, 9, 10]],
+    )
+    before = img.copy()
+    for k in (-1, 6):
+        with pytest.raises(ValueError):
+            remove_pixels_per_row(img, k, energy=energy)
+    np.testing.assert_array_equal(img, before)

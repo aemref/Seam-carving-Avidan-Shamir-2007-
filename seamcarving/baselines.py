@@ -125,3 +125,22 @@ def remove_columns(img: np.ndarray, k: int, energy: np.ndarray | None = None) ->
     keep = np.ones(w, dtype=bool)
     keep[drop] = False
     return img[:, keep].copy()
+
+
+def remove_pixels_per_row(
+    img: np.ndarray, k: int, energy: np.ndarray | None = None
+) -> np.ndarray:
+    """Remove the ``k`` lowest-energy pixels of every row independently (paper Fig. 2e).
+
+    Not part of the shared contract; used by experiment D3. img: (H, W[, C]);
+    0 <= k < W. Returns (H, W-k[, C]); remaining pixels keep their order within
+    each row. Ties remove the leftmost pixel first (stable sort).
+    """
+    img = _check_image(img)
+    energy = _get_energy(img, energy)
+    h, w = energy.shape
+    k = _check_k(k, w)
+    drop = np.argsort(energy, axis=1, kind="stable")[:, :k]
+    keep = np.ones((h, w), dtype=bool)
+    keep[np.arange(h)[:, None], drop] = False
+    return img[keep].reshape((h, w - k) + img.shape[2:])
