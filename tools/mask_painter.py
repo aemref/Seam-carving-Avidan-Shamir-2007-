@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
 from itertools import pairwise
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -24,6 +25,13 @@ DEFAULT_BRUSH_RADIUS = 12
 BRUSH_GROWTH_FACTOR = 1.25
 
 MAX_UNDO_STEPS = 50
+MASK_ON_VALUE = 255
+MASK_FILE_EXTENSION = ".png"
+MASKS_DIR_NAME = "masks"
+
+
+class MaskPainterError(Exception):
+    """Raised when an image or mask file cannot be used; the message is user-facing."""
 
 
 class MaskLayer(Enum):
@@ -283,3 +291,106 @@ class DisplayTransform:
     def _display_to_image_index(self, display_index: float | np.ndarray) -> np.ndarray:
         """Image row/col index whose pixel contains the display pixel's center."""
         return np.floor((display_index + 0.5) / self.scale).astype(int)
+
+
+@dataclass(frozen=True)
+class MaskPaths:
+    """Where an image's REMOVE and PROTECT masks live on disk."""
+
+    image_stem: str
+    remove: Path
+    protect: Path
+
+    @classmethod
+    def for_image(cls, image_path: Path, mask_dir: Path) -> MaskPaths:
+        """``<mask_dir>/<image-stem>_remove.png`` and ``..._protect.png``."""
+        return cls(
+            image_stem=image_path.stem,
+            remove=_layer_path(image_path, mask_dir, MaskLayer.REMOVE),
+            protect=_layer_path(image_path, mask_dir, MaskLayer.PROTECT),
+        )
+
+    def path_for(self, layer: MaskLayer) -> Path:
+        return {MaskLayer.REMOVE: self.remove, MaskLayer.PROTECT: self.protect}[layer]
+
+
+def _layer_path(image_path: Path, mask_dir: Path, layer: MaskLayer) -> Path:
+    return mask_dir / f"{image_path.stem}_{layer.file_suffix}{MASK_FILE_EXTENSION}"
+
+
+def default_mask_dir(image_path: Path) -> Path:
+    """The ``masks`` folder next to the image's folder (data/images -> data/masks)."""
+    return image_path.parent.parent / MASKS_DIR_NAME
+
+
+class SaveOutcome(Enum):
+    """What ``save_mask`` did, phrased for the terminal."""
+
+    WRITTEN = "saved"
+    SKIPPED_EMPTY = "empty, not written"
+    DELETED_STALE = "empty, deleted stale file"
+
+
+def load_image(image_path: Path) -> np.ndarray:
+    """Read an image as (H, W, 3) BGR uint8, exactly like the seam carving pipeline."""
+    if not image_path.is_file():
+        raise MaskPainterError(f"image not found: {image_path}")
+    image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+    if image is None:
+        raise MaskPainterError(f"cannot read image (unsupported or corrupt?): {image_path}")
+    return image
+
+
+def load_mask(mask_path: Path, image_shape: tuple[int, ...]) -> np.ndarray:
+    """Read a mask PNG as (H, W) bool (any nonzero = marked); empty if the file is absent.
+
+    Raises:
+        MaskPainterError: if the file is unreadable or its size differs from the image.
+    """
+    expected_shape = tuple(image_shape[:2])
+    if not mask_path.exists():
+        return np.zeros(expected_shape, dtype=bool)
+    stored = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+    if stored is None:
+        raise MaskPainterError(f"cannot read mask: {mask_path}")
+    if stored.shape != expected_shape:
+        raise MaskPainterError(
+            f"mask {mask_path} is {stored.shape[1]}x{stored.shape[0]} (WxH) but the image "
+            f"is {expected_shape[1]}x{expected_shape[0]}; fix or delete the mask file"
+        )
+    return stored != 0
+
+
+def save_mask(mask: np.ndarray, mask_path: Path) -> SaveOutcome:
+    """Write an (H, W) bool mask as a 0/255 PNG; empty masks are never written.
+
+    An empty mask whose file already exists deletes that now stale file.
+    """
+    if not mask.any():
+        return _discard_empty_mask(mask_path)
+    mask_path.parent.mkdir(parents=True, exist_ok=True)
+    if not cv2.imwrite(str(mask_path), mask.astype(np.uint8) * MASK_ON_VALUE):
+        raise MaskPainterError(f"cannot write mask: {mask_path}")
+    return SaveOutcome.WRITTEN
+
+
+def _discard_empty_mask(mask_path: Path) -> SaveOutcome:
+    if mask_path.exists():
+        mask_path.unlink()
+        return SaveOutcome.DELETED_STALE
+    return SaveOutcome.SKIPPED_EMPTY
+
+
+def load_session(paths: MaskPaths, image_shape: tuple[int, ...]) -> PaintSession:
+    """Start a session from the masks on disk (or empty masks where none exist)."""
+    return PaintSession(load_mask(paths.remove, image_shape), load_mask(paths.protect, image_shape))
+
+
+def save_session(session: PaintSession, paths: MaskPaths) -> dict[Path, SaveOutcome]:
+    """Save both masks, mark the session saved and report what happened per file."""
+    outcomes = {}
+    for layer in MaskLayer:
+        mask_path = paths.path_for(layer)
+        outcomes[mask_path] = save_mask(session.mask(layer), mask_path)
+    session.mark_saved()
+    return outcomes

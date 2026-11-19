@@ -4,6 +4,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import cv2
 import numpy as np
 import pytest
 
@@ -24,6 +25,7 @@ IMAGE_SHAPE = (40, 60)
 CENTER = (20, 30)
 BRUSH_RADIUS = 5
 GRAY_LEVEL = 100
+IMAGE_STEM = "nature_01_lake"
 LARGE_IMAGE_SHAPE = (3024, 4032)
 MAX_DISPLAY_SIDE = 1000
 
@@ -39,6 +41,15 @@ def gray_image():
 def pixels_within(radius, center, shape=IMAGE_SHAPE):
     rows, cols = np.ogrid[: shape[0], : shape[1]]
     return (rows - center[0]) ** 2 + (cols - center[1]) ** 2 <= radius**2
+
+
+def mask_paths(tmp_path):
+    return mp.MaskPaths.for_image(tmp_path / "images" / f"{IMAGE_STEM}.jpg", tmp_path / "masks")
+
+
+def write_png(path, array):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    assert cv2.imwrite(str(path), array)
 
 
 def test_single_point_stroke_paints_disk_of_brush_radius():
@@ -305,3 +316,115 @@ def test_shrink_mask_uses_nearest_neighbor_and_display_shape():
 
     assert shrunk.shape == transform.display_shape(IMAGE_SHAPE) and shrunk.dtype == bool
     assert shrunk[:, : IMAGE_SHAPE[1] // 4].all() and not shrunk[:, IMAGE_SHAPE[1] // 4 :].any()
+
+
+def test_default_mask_dir_is_masks_sibling_of_image_folder():
+    image_path = Path("data") / "images" / f"{IMAGE_STEM}.jpg"
+
+    assert mp.default_mask_dir(image_path) == Path("data") / "masks"
+
+
+def test_mask_paths_follow_naming_convention():
+    paths = mp.MaskPaths.for_image(Path("data/images") / f"{IMAGE_STEM}.jpg", Path("data/masks"))
+
+    assert paths.remove == Path("data/masks") / f"{IMAGE_STEM}_remove.png"
+    assert paths.protect == Path("data/masks") / f"{IMAGE_STEM}_protect.png"
+
+
+def test_save_writes_single_channel_0_255_png_of_image_size(tmp_path):
+    paths = mask_paths(tmp_path)
+    session = mp.PaintSession.blank(IMAGE_SHAPE)
+    session.begin_stroke(mp.MaskLayer.REMOVE, CENTER, BRUSH_RADIUS)
+
+    outcomes = mp.save_session(session, paths)
+
+    stored = cv2.imread(str(paths.remove), cv2.IMREAD_UNCHANGED)
+    assert outcomes[paths.remove] is mp.SaveOutcome.WRITTEN
+    assert stored.shape == IMAGE_SHAPE and stored.dtype == np.uint8
+    assert set(np.unique(stored)) == {0, mp.MASK_ON_VALUE}
+    np.testing.assert_array_equal(stored != 0, pixels_within(BRUSH_RADIUS, CENTER))
+
+
+def test_save_skips_empty_mask(tmp_path):
+    paths = mask_paths(tmp_path)
+    session = mp.PaintSession.blank(IMAGE_SHAPE)
+    session.begin_stroke(mp.MaskLayer.REMOVE, CENTER, BRUSH_RADIUS)
+
+    outcomes = mp.save_session(session, paths)
+
+    assert outcomes[paths.protect] is mp.SaveOutcome.SKIPPED_EMPTY
+    assert not paths.protect.exists()
+
+
+def test_save_deletes_stale_file_of_cleared_mask(tmp_path):
+    paths = mask_paths(tmp_path)
+    session = mp.PaintSession.blank(IMAGE_SHAPE)
+    session.begin_stroke(mp.MaskLayer.PROTECT, CENTER, BRUSH_RADIUS)
+    mp.save_session(session, paths)
+
+    session.clear()
+    outcomes = mp.save_session(session, paths)
+
+    assert outcomes[paths.protect] is mp.SaveOutcome.DELETED_STALE
+    assert not paths.protect.exists()
+
+
+def test_save_marks_session_as_saved(tmp_path):
+    session = mp.PaintSession.blank(IMAGE_SHAPE)
+    session.begin_stroke(mp.MaskLayer.REMOVE, CENTER, BRUSH_RADIUS)
+
+    mp.save_session(session, mask_paths(tmp_path))
+
+    assert not session.has_unsaved_changes()
+
+
+def test_saved_masks_load_back_identically(tmp_path):
+    paths = mask_paths(tmp_path)
+    session = mp.PaintSession.blank(IMAGE_SHAPE)
+    session.begin_stroke(mp.MaskLayer.REMOVE, (10, 10), BRUSH_RADIUS)
+    session.begin_stroke(mp.MaskLayer.PROTECT, (30, 40), BRUSH_RADIUS)
+    mp.save_session(session, paths)
+
+    loaded = mp.load_session(paths, gray_image().shape)
+
+    for layer in mp.MaskLayer:
+        np.testing.assert_array_equal(loaded.mask(layer), session.mask(layer))
+    assert not loaded.has_unsaved_changes()
+
+
+def test_load_treats_any_nonzero_value_as_marked(tmp_path):
+    mask_path = tmp_path / "faint.png"
+    faint = np.zeros(IMAGE_SHAPE, dtype=np.uint8)
+    faint[CENTER] = 1
+    write_png(mask_path, faint)
+
+    loaded = mp.load_mask(mask_path, IMAGE_SHAPE)
+
+    assert loaded.dtype == bool and loaded[CENTER] and loaded.sum() == 1
+
+
+def test_load_missing_mask_gives_empty_mask(tmp_path):
+    loaded = mp.load_mask(tmp_path / "absent.png", gray_image().shape)
+
+    assert loaded.shape == IMAGE_SHAPE and not loaded.any()
+
+
+def test_load_mask_with_wrong_size_raises_clear_error(tmp_path):
+    mask_path = tmp_path / "wrong_size.png"
+    write_png(mask_path, np.zeros((IMAGE_SHAPE[0] + 1, IMAGE_SHAPE[1]), dtype=np.uint8))
+
+    with pytest.raises(mp.MaskPainterError, match="fix or delete"):
+        mp.load_mask(mask_path, IMAGE_SHAPE)
+
+
+def test_load_missing_image_raises_clear_error(tmp_path):
+    with pytest.raises(mp.MaskPainterError, match="image not found"):
+        mp.load_image(tmp_path / "missing.jpg")
+
+
+def test_load_unreadable_image_raises_clear_error(tmp_path):
+    not_an_image = tmp_path / "broken.jpg"
+    not_an_image.write_text("not a jpeg")
+
+    with pytest.raises(mp.MaskPainterError, match="cannot read image"):
+        mp.load_image(not_an_image)
