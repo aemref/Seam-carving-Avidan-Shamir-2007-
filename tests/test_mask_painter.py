@@ -23,10 +23,15 @@ mp = _import_mask_painter()
 IMAGE_SHAPE = (40, 60)
 CENTER = (20, 30)
 BRUSH_RADIUS = 5
+GRAY_LEVEL = 100
 
 
 def blank_mask():
     return np.zeros(IMAGE_SHAPE, dtype=bool)
+
+
+def gray_image():
+    return np.full((*IMAGE_SHAPE, 3), GRAY_LEVEL, dtype=np.uint8)
 
 
 def pixels_within(radius, center, shape=IMAGE_SHAPE):
@@ -199,3 +204,45 @@ def test_brush_radius_steps_up_and_down():
 def test_brush_radius_is_clamped_to_limits():
     assert mp.smaller_brush_radius(mp.MIN_BRUSH_RADIUS) == mp.MIN_BRUSH_RADIUS
     assert mp.larger_brush_radius(mp.MAX_BRUSH_RADIUS) == mp.MAX_BRUSH_RADIUS
+
+
+def test_overlay_is_bgr_uint8_of_image_size_and_keeps_unmarked_pixels():
+    image = gray_image()
+    remove_mask = pixels_within(BRUSH_RADIUS, CENTER)
+
+    preview = mp.render_overlay(image, remove_mask, blank_mask())
+
+    assert preview.shape == image.shape and preview.dtype == np.uint8
+    np.testing.assert_array_equal(preview[~remove_mask], image[~remove_mask])
+    assert (preview[remove_mask] != image[remove_mask]).any(axis=1).all()
+
+
+def test_overlay_tints_remove_green_and_protect_red():
+    image = gray_image()
+    remove_mask, protect_mask = blank_mask(), blank_mask()
+    remove_mask[5, 5] = protect_mask[10, 10] = True
+
+    preview = mp.render_overlay(image, remove_mask, protect_mask)
+
+    blue, green, red = (int(v) for v in preview[5, 5])
+    assert green > GRAY_LEVEL and blue < GRAY_LEVEL and red < GRAY_LEVEL
+    blue, green, red = (int(v) for v in preview[10, 10])
+    assert red > GRAY_LEVEL and blue < GRAY_LEVEL and green < GRAY_LEVEL
+
+
+def test_overlay_draws_protect_on_top_where_masks_overlap():
+    image = gray_image()
+    both = pixels_within(BRUSH_RADIUS, CENTER)
+
+    overlapping = mp.render_overlay(image, both, both)
+    protect_only = mp.render_overlay(image, blank_mask(), both)
+
+    np.testing.assert_array_equal(overlapping, protect_only)
+
+
+def test_overlay_does_not_modify_image():
+    image = gray_image()
+
+    mp.render_overlay(image, pixels_within(BRUSH_RADIUS, CENTER), blank_mask())
+
+    assert (image == GRAY_LEVEL).all()

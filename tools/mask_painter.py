@@ -15,6 +15,7 @@ Point = tuple[float, float]
 
 GREEN_BGR = (0, 255, 0)
 RED_BGR = (0, 0, 255)
+OVERLAY_ALPHA = 0.45
 
 MIN_BRUSH_RADIUS = 1
 MAX_BRUSH_RADIUS = 150
@@ -203,3 +204,28 @@ def larger_brush_radius(radius: int) -> int:
 def smaller_brush_radius(radius: int) -> int:
     """Next brush radius down (about -20 %, at least -1), clamped to MIN_BRUSH_RADIUS."""
     return max(min(radius - 1, round(radius / BRUSH_GROWTH_FACTOR)), MIN_BRUSH_RADIUS)
+
+
+def render_overlay(
+    image: np.ndarray, remove_mask: np.ndarray, protect_mask: np.ndarray
+) -> np.ndarray:
+    """Blend the masks onto the image as semi-transparent color.
+
+    Args:
+        image: (H, W, 3) BGR uint8; not modified.
+        remove_mask: (H, W) bool, tinted green.
+        protect_mask: (H, W) bool, tinted red and drawn on top where both are set.
+
+    Returns:
+        (H, W, 3) BGR uint8 preview; unmarked pixels equal the input image.
+    """
+    preview = image.copy()
+    for layer, mask in ((MaskLayer.REMOVE, remove_mask), (MaskLayer.PROTECT, protect_mask)):
+        preview[mask] = _tint(image[mask], layer.color_bgr)
+    return preview
+
+
+def _tint(pixels: np.ndarray, color_bgr: tuple[int, int, int]) -> np.ndarray:
+    """Blend (N, 3) uint8 pixels toward ``color_bgr`` by OVERLAY_ALPHA."""
+    blended = (1.0 - OVERLAY_ALPHA) * pixels + OVERLAY_ALPHA * np.array(color_bgr)
+    return np.round(blended).astype(np.uint8)
