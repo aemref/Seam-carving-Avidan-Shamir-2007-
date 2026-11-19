@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from seamcarving.baselines import (
+    center_crop,
     scale,
 )
 
@@ -53,3 +54,22 @@ def test_scale_explicit_interpolation_and_no_mutation():
 def test_scale_invalid_size(new_size):
     with pytest.raises(ValueError):
         scale(make_image(), *new_size)
+
+
+# center_crop --------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("channels", [None, 3])
+def test_center_crop(channels):
+    img = make_image(12, 16, channels)
+    out = center_crop(img, 6, 9)
+    assert out.shape == (6, 9) + img.shape[2:]
+    assert out.dtype == img.dtype
+    np.testing.assert_array_equal(out, img[3:9, 3:12])
+    assert not np.shares_memory(out, img)
+
+
+@pytest.mark.parametrize("new_size", [(13, 16), (12, 17), (0, 5), (5, -2)])
+def test_center_crop_invalid(new_size):
+    with pytest.raises(ValueError):
+        center_crop(make_image(12, 16), *new_size)

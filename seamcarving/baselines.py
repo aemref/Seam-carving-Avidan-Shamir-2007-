@@ -74,7 +74,11 @@ def center_crop(img: np.ndarray, new_h: int, new_w: int) -> np.ndarray:
     (H, W[, C]) -> (new_h, new_w[, C]); odd margins put the extra pixel at the end.
     Raises ValueError if the target is non-positive or larger than the image.
     """
-    raise NotImplementedError
+    img = _check_image(img)
+    new_h, new_w = _check_size(img, new_h, new_w, allow_larger=False)
+    r0 = (img.shape[0] - new_h) // 2
+    c0 = (img.shape[1] - new_w) // 2
+    return img[r0:r0 + new_h, c0:c0 + new_w].copy()
 
 
 def best_crop(
