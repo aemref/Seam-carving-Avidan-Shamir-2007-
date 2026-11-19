@@ -6,6 +6,7 @@ import pytest
 from seamcarving import enlarge
 from seamcarving.carve import ShrinkResult
 from seamcarving.enlarge import (
+    amplify_content,
     enlarge_height,
     enlarge_width,
     insert_vertical_seams,
@@ -279,6 +280,35 @@ def test_enlarge_height_matches_transposed_width(recorded):
     assert out.shape == (11, 5, 3)
     expected = np.swapaxes(enlarge_width(np.swapaxes(img, 0, 1), 3), 0, 1)
     np.testing.assert_array_equal(out, expected)
+
+
+def test_amplify_content_shape_with_fakes(monkeypatch):
+    calls = []
+
+    def width(img, k, energy_fn=None, seam_fn=None, carry=()):
+        calls.append(("width", img.shape[:2], k))
+        return fake_shrink_width(img, k, energy_fn, seam_fn, carry)
+
+    def height(img, k, energy_fn=None, seam_fn=None, carry=()):
+        calls.append(("height", img.shape[:2], k))
+        return fake_shrink_height(img, k, energy_fn, seam_fn, carry)
+
+    monkeypatch.setattr("seamcarving.carve.shrink_width", width)
+    monkeypatch.setattr("seamcarving.carve.shrink_height", height)
+    rng = np.random.default_rng(6)
+    img = rng.integers(0, 256, size=(10, 15, 3), dtype=np.uint8)
+    out = amplify_content(img, scale=1.2)  # 12 x 18, then back to 10 x 15
+    assert out.shape == img.shape and out.dtype == img.dtype
+    assert calls == [("width", (12, 18), 3), ("height", (12, 15), 2)]
+
+
+def test_amplify_content_scale_one_and_invalid():
+    img = np.arange(12, dtype=np.uint8).reshape(3, 4)
+    out = amplify_content(img, scale=1.0)
+    np.testing.assert_array_equal(out, img)
+    assert out is not img
+    with pytest.raises(ValueError):
+        amplify_content(img, scale=0.9)
 
 
 def test_enlarge_uses_carve_module_attribute():

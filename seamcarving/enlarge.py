@@ -8,6 +8,7 @@ and again and produce a stretched band.
 
 import math
 
+import cv2
 import numpy as np
 
 from seamcarving import carve
@@ -153,5 +154,24 @@ def amplify_content(
     energy_fn: EnergyFn | None = None,
     seam_fn: SeamFn | None = None,
 ) -> np.ndarray:
-    """Content amplification: scale up, then carve back. Output has the input's size."""
-    raise NotImplementedError
+    """Content amplification (paper section 4.4): scale up, then carve back to the original size.
+
+    img: (H, W) or (H, W, C). Returns an array with the same shape and dtype as img.
+    The image is resized with cv2.INTER_CUBIC to (round(scale * H), round(scale * W)), then
+    carve.shrink_width and carve.shrink_height remove the extra columns and rows.
+    scale must be >= 1; scale == 1 returns a copy.
+    """
+    if scale < 1:
+        raise ValueError(f"scale must be >= 1, got {scale}")
+    if scale == 1:
+        return img.copy()
+    h, w = img.shape[:2]
+    new_h, new_w = round(scale * h), round(scale * w)
+    big = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
+    if big.ndim < img.ndim:  # cv2 drops a single channel axis
+        big = big[..., np.newaxis]
+    if new_w > w:
+        big = carve.shrink_width(big, new_w - w, energy_fn=energy_fn, seam_fn=seam_fn).image
+    if new_h > h:
+        big = carve.shrink_height(big, new_h - h, energy_fn=energy_fn, seam_fn=seam_fn).image
+    return big
