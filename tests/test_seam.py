@@ -289,3 +289,34 @@ def test_is_valid_seam_accepts(seam, width):
 )
 def test_is_valid_seam_rejects_without_raising(seam, width):
     assert is_valid_seam(seam, width) is False
+
+
+# --- brute force --------------------------------------------------------------------------
+
+
+def _all_seams(n_rows, n_cols):
+    """Yield every valid vertical seam as a list (W * 3**(H-1) candidates at most)."""
+    if n_rows == 1:
+        for c in range(n_cols):
+            yield [c]
+        return
+    for upper in _all_seams(n_rows - 1, n_cols):
+        for step in (-1, 0, 1):
+            c = upper[-1] + step
+            if 0 <= c < n_cols:
+                yield upper + [c]
+
+
+def test_dp_matches_brute_force_on_tiny_maps():
+    rng = np.random.default_rng(0)
+    for _ in range(200):
+        n_rows, n_cols = rng.integers(2, 7, size=2)
+        # Small integer range: many ties, negative values, exact float sums.
+        energy = rng.integers(-5, 10, size=(n_rows, n_cols)).astype(np.float64)
+        rows = np.arange(n_rows)
+        best = min(energy[rows, seam].sum() for seam in _all_seams(n_rows, n_cols))
+
+        seam = find_vertical_seam(energy)
+        assert is_valid_seam(seam, n_cols)
+        assert seam_cost(energy, seam) == best
+        assert cumulative_map(energy)[0][-1].min() == best
