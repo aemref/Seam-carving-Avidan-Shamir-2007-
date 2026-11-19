@@ -8,38 +8,60 @@
 
 **Horizontal seams.** `shrink_height` swaps the first two axes of the image and of every carried array, calls `shrink_width`, and swaps the results back. A horizontal seam is thus a vertical seam of the transpose, and `seam` implements vertical seams only.
 
-**Vectorisation.** `cumulative_map` loops in Python over rows only. For row $r$, row $r-1$ of $M$ is copied into a buffer of length $W + 2$ with $+\infty$ at both ends. Three shifted views of it (left, middle and right parent) are stacked into a $3 \times W$ array, and one `argmin` along the first axis gives every column's best parent at once; since `argmin` returns the first minimum, ties go left. $M(r, \cdot)$ is the energy plus the chosen values, and the offset `best - 1` is stored as `int8` in `back`. Backtracking loops over the $H$ rows. As a development check, not part of D6, one `find_vertical_seam` call on a random $533 \times 800$ map took a median of 6.8 ms over 50 calls (Apple M4, Python 3.14, NumPy 2.5).
+**Vectorisation.** `cumulative_map` loops in Python over rows only. For row $r$, row $r-1$ of $M$ is copied into a buffer of length $W + 2$ with $+\infty$ at both ends. Three shifted views of it (left, middle and right parent) are stacked into a $3 \times W$ array, and one `argmin` along the first axis gives every column's best parent at once; since `argmin` returns the first minimum, ties go left. $M(r, \cdot)$ is the energy plus the chosen values, and the offset `best - 1` is stored as `int8` in `back`. Backtracking loops over the $H$ rows.
 
-**NumPy-only core.** Filtering, energy, dynamic programming, seam removal and seam insertion use only NumPy. OpenCV is used for reading and writing files, colour conversion, the `cv2.resize` baseline, mask dilation, median filtering in D8, the mask-painting window, and as a reference in tests.
+**NumPy-only core.** Filtering, energy (including the colour-to-grey conversion), dynamic programming, seam removal and seam insertion use only NumPy. OpenCV appears around this core: image file encoding and decoding, `cv2.resize` for the scaling baseline, for the upscaling step of content amplification and for preparing the photos, and `cv2.Sobel`, `cv2.Scharr` and `cv2.Laplacian` as references in the energy tests.
 
 <!--
-TODO(D6): section 4.2 waits for experiments/d6_runtime.py. Fill it in from
-results/tables/d6_runtime.csv and remove this comment. Column names are not fixed yet;
-the names below are the planned meaning, to be replaced with the real ones.
+TODO(D6): section 4.2 waits for a run of experiments/d6_runtime.py on a data set photo.
+Fill it in from results/tables/d6_runtime.csv, then delete this comment.
+The CSV is in long format, one number per row. Header:
+section,quantity,size,height,width,value,unit,statistic,n,notes
+A cell is named below as (section, quantity, size); the number is in "value".
+Sizes: long300, long600, long800, long1200. Timings are medians (statistic, n columns).
 
 ### 4.2 Runtime (D6)
 
-Setup sentence: image and sizes. One photo from the data set, resized with cv2.resize to
-long side 300, 600, 800 and 1200 px. Source: the size columns (H, W, number of pixels).
-Hardware sentence: CPU, Python and NumPy version. Source: the environment columns.
+Setup (1 to 2 sentences). Photo: (input, photo, "") value, its size from height/width.
+Resized with cv2.resize to long side 300, 600, 800 and 1200 px; H and W of each size from
+the height/width columns of (per_seam, pixels, longNNN). Machine: (env, cpu), (env, python),
+(env, numpy). Method: (method, timer), (method, statistic), energy settings from
+(method, energy).
 
-Sentence 1, time per seam at each size, split into energy, DP and seam removal.
-Source: per-step time columns (energy, DP, removal) and their total, one row per size.
+Sentence 1, time per seam by step. For each size: (per_seam, energy_ms, longNNN),
+(per_seam, dp_ms, longNNN), (per_seam, remove_ms, longNNN), (per_seam, total_ms, longNNN).
+Name the step with the largest share: (per_seam, energy_share | dp_share | remove_share,
+longNNN). Panel (a) of the figure.
 
-Sentence 2, nested-loop DP against vectorised DP at the two sizes where both were run.
-Source: the two DP time columns and their ratio. State the ratio as measured.
+Sentence 2, linear in the number of pixels (the paper's claim, Sec. 5: "Seam carving is
+linear in the number of pixels"). Fit of per-seam total time against H x W:
+(fit, per_seam_total_slope, all) in ns per pixel, (fit, per_seam_total_intercept, all) in ms,
+(fit, per_seam_total_r2, all). Panel (a).
 
-Sentence 3, total time to reduce the width by 25 percent at each size.
-Source: the total shrink time column.
+Sentence 3, shrinking the width by 25 percent. For each size: (shrink25, seams, longNNN),
+(shrink25, total_s, longNNN), (shrink25, ms_per_seam, longNNN). Say explicitly that the
+total is NOT linear in the original H x W, because the number of seams k also grows with W.
+It is fitted against the pixels actually processed, the sum of H x (W - i) over the k seams:
+(shrink25, work_pixels, longNNN), (fit, shrink25_total_slope, all),
+(fit, shrink25_total_intercept, all), (fit, shrink25_total_r2, all). Panel (b).
 
-Sentence 4, linear fit of time against number of pixels: slope and R^2.
-Source: the fit columns (or compute from the per-size rows and say so).
+Sentence 4, what vectorisation buys (DP only). At long300 and long800:
+(dp_compare, naive_ms, longNNN), (dp_compare, vectorised_ms, longNNN),
+(dp_compare, speedup, longNNN). Both versions gave identical M and back:
+(dp_compare, same_M_and_back, longNNN). Panel (c).
 
-Sentence 5, comparison with the paper (Section 5): "Seam carving is linear in the number of
-pixels"; 400 x 500 to 100 x 100 in about 2.2 s on 2007 hardware. Compare only the trend,
-not the absolute time; hardware and image sizes differ.
+Sentence 5, the paper's own example, measured with resize on the same photo: 400 x 500 to
+100 x 100. Our time: (paper, seconds_assumed, 400x500->100x100) for 400 rows x 500 columns,
+and (paper, seconds_swapped, 500x400->100x100) because the paper does not say which side is
+the height. Paper: (paper, paper_seconds, 400x500->100x100), "about 2.2 seconds".
+Ratios: (paper, paper_over_ours_assumed, 400x500->100x100),
+(paper, paper_over_ours_swapped, 500x400->100x100). Absolute times may be given, but state
+that the machines and the implementations differ: the paper's timing is from its own
+implementation, published in 2007, and the paper does not name its hardware.
 
-Figure (one): ![Time per seam against number of pixels, with a linear fit (D6).](FIG/d6_runtime.png)
+Figure (one, three panels: (a) time per seam by step with linear fit, (b) 25 percent width
+reduction with linear fit, (c) nested-loop vs vectorised DP):
+![Runtime of our implementation (D6). (a) Time per seam by step against H x W, with a linear fit. (b) Total time to reduce the width by 25 %, against the pixels processed, with a linear fit. (c) DP alone: nested Python loops against the vectorised cumulative map.](FIG/d6_runtime.png)
 
-Length: 150 to 300 words. Report bad results too (for example a poor linear fit).
+Length: 150 to 300 words. Report weak results too (for example a low R^2).
 -->
