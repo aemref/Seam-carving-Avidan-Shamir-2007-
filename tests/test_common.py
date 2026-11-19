@@ -167,3 +167,57 @@ def test_load_image_errors(dirs):
         common.load_image(images / "broken.jpg")
     with pytest.raises(FileNotFoundError):
         common.load_image(images)
+
+
+# --- load_mask ---------------------------------------------------------------
+
+
+@pytest.fixture
+def photo(dirs):
+    path = dirs["IMAGES_DIR"] / "nesne_01_emre.jpg"
+    write_image(path, np.full((4, 6, 3), 128, dtype=np.uint8), ext=".jpg")
+    return path
+
+
+def test_load_mask_threshold_and_kinds(dirs, photo, no_path_io):
+    values = np.array([[0, 127, 128, 255, 200, 1]] * 4, dtype=np.uint8)
+    write_image(dirs["MASKS_DIR"] / "nesne_01_emre_remove.png", values)
+    write_image(dirs["MASKS_DIR"] / "nesne_01_emre_protect.png", 255 - values)
+    for arg in (photo, str(photo)):
+        mask = common.load_mask(arg)
+        assert mask.dtype == np.bool_ and mask.shape == (4, 6)
+        np.testing.assert_array_equal(mask, values > 127)
+    protect = common.load_mask(photo, kind="protect")
+    np.testing.assert_array_equal(protect, (255 - values) > 127)
+
+
+def test_load_mask_colour_file(dirs, photo):
+    bgr = np.zeros((4, 6, 3), dtype=np.uint8)
+    bgr[:, :3] = 255
+    write_image(dirs["MASKS_DIR"] / "nesne_01_emre_remove.png", bgr)
+    expected = np.zeros((4, 6), dtype=bool)
+    expected[:, :3] = True
+    np.testing.assert_array_equal(common.load_mask(photo), expected)
+
+
+def test_load_mask_missing_returns_none(dirs, photo):
+    assert common.load_mask(photo) is None
+    write_image(dirs["MASKS_DIR"] / "nesne_01_emre_remove.png", np.zeros((4, 6), np.uint8))
+    assert common.load_mask(photo, kind="protect") is None
+    assert common.load_mask(photo) is not None
+
+
+def test_load_mask_errors(dirs, photo):
+    with pytest.raises(ValueError, match="kind"):
+        common.load_mask(photo, kind="delete")
+    write_image(dirs["MASKS_DIR"] / "nesne_01_emre_remove.png", np.zeros((6, 4), np.uint8))
+    with pytest.raises(ValueError, match="6x4"):
+        common.load_mask(photo)
+
+
+def test_load_mask_reads_dir_at_call_time(dirs, photo, tmp_path, monkeypatch):
+    other = tmp_path / "other_masks"
+    write_image(other / "nesne_01_emre_remove.png", np.full((4, 6), 255, np.uint8))
+    assert common.load_mask(photo) is None
+    monkeypatch.setattr(common, "MASKS_DIR", other)
+    assert common.load_mask(photo).all()

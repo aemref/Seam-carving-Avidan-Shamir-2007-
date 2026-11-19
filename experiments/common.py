@@ -19,6 +19,7 @@ TABLE_DIR = ROOT / "results" / "tables"
 
 CATEGORIES = ("manzara", "nesne", "insan", "mimari", "yogun")
 PEOPLE = ("emre", "ahsen", "mirza", "furkan", "berkay")
+MASK_KINDS = ("remove", "protect")
 
 # <category>_<nn>_<person>.jpg, e.g. manzara_01_emre.jpg
 _IMAGE_NAME = re.compile(r"(?P<category>[a-z]+)_(?P<nn>\d{2})_(?P<person>[a-z]+)\.jpg")
@@ -80,8 +81,27 @@ def load_image(path: str | Path) -> np.ndarray:
 
 
 def load_mask(image_path: str | Path, kind: str = "remove") -> np.ndarray | None:
-    """Load an image's mask as bool (H, W); None if missing. kind: "remove" | "protect"."""
-    raise NotImplementedError
+    """Load ``MASKS_DIR/<image stem>_<kind>.png`` as a bool ``(H, W)`` mask (pixel > 127).
+
+    ``kind`` is ``"remove"`` or ``"protect"``; anything else raises ``ValueError``.
+    Returns ``None`` when the mask file does not exist. The image itself is read to check
+    the size: a mask whose ``(H, W)`` differs from the image's raises ``ValueError``.
+    Colour or alpha mask files are converted to grayscale before thresholding.
+    """
+    if kind not in MASK_KINDS:
+        raise ValueError(f"unknown mask kind {kind!r}; expected one of {MASK_KINDS}")
+    image_path = Path(image_path)
+    mask_path = Path(MASKS_DIR) / f"{image_path.stem}_{kind}.png"
+    if not mask_path.is_file():
+        return None
+    mask = _decode(mask_path, cv2.IMREAD_GRAYSCALE) > 127
+    image_shape = load_image(image_path).shape[:2]
+    if mask.shape != image_shape:
+        raise ValueError(
+            f"mask {mask_path.name} is {mask.shape[0]}x{mask.shape[1]} (HxW) but image "
+            f"{image_path.name} is {image_shape[0]}x{image_shape[1]}"
+        )
+    return mask
 
 
 def save_figure(name: str, img: np.ndarray) -> Path:
