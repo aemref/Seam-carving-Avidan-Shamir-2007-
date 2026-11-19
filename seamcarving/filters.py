@@ -19,6 +19,23 @@ _PAD_MODES = {
 }
 
 
+# (responds to horizontal edges), *_COLS along the column index c.
+SOBEL_ROWS = np.array([[-1, -2, -1], [0, 0, 0], [1, 2, 1]], dtype=np.float64)
+SOBEL_COLS = SOBEL_ROWS.T.copy()
+
+# Scharr: same layout as Sobel, better rotational symmetry.
+SCHARR_ROWS = np.array([[-3, -10, -3], [0, 0, 0], [3, 10, 3]], dtype=np.float64)
+SCHARR_COLS = SCHARR_ROWS.T.copy()
+
+# Laplacian, kernel (a) of week 5, slide 48.
+LAPLACIAN = np.array([[0, 1, 0], [1, -4, 1], [0, 1, 0]], dtype=np.float64)
+
+# Roberts cross differences embedded in 3 x 3 (week 5, slide 57).
+# With z5 the centre pixel: ROBERTS_DIAG = z9 - z5, ROBERTS_ANTI = z8 - z6.
+ROBERTS_DIAG = np.array([[0, 0, 0], [0, -1, 0], [0, 0, 1]], dtype=np.float64)
+ROBERTS_ANTI = np.array([[0, 0, 0], [0, 0, -1], [0, 1, 0]], dtype=np.float64)
+
+
 def correlate2d(img: np.ndarray, kernel: np.ndarray, border: str = "reflect") -> np.ndarray:
     """Correlate a 2-D image with a kernel.
 
