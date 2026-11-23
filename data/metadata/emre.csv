@@ -1,0 +1,5 @@
+file,category,person,source_name,orig_width,orig_height,width,height
+insan_01_emre.jpg,insan,emre,insan/insan_3.jpeg,5120,3840,800,600
+manzara_01_emre.jpg,manzara,emre,manzara/manzara_3.jpeg,2040,1530,800,600
+nesne_01_emre.jpg,nesne,emre,nesne/nesne_1.jpeg,1600,1200,800,600
+yogun_01_emre.jpg,yogun,emre,yogun/yogun_2.jpeg,1600,1200,800,600
