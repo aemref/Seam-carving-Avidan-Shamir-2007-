@@ -13,20 +13,9 @@ Notes: One pixel per row, at most one column sideways: an 8-connected path from 
 
 - The Python loop runs over rows only; each row is one NumPy step: shift, stack, `argmin`
 - Horizontal seams reuse the same code on the transposed image
+- One seam at 600 × 800: 20.9 ms, of which the DP is 8.4 ms; 43 ns per pixel, linear
+- Vectorised DP against nested loops at 600 × 800: 8.4 ms against 179 ms, 21 times faster
 
-<!--
-TODO(D6): finish this slide after experiments/d6_runtime.py has run on a data set photo,
-then delete this comment. Cells of results/tables/d6_runtime.csv as (section, quantity, size):
-Bullet 3: one seam at the 800 px working size, total and DP part:
-  (per_seam, total_ms, long800), (per_seam, dp_ms, long800).
-Bullet 4: vectorised DP against nested Python loops at long800:
-  (dp_compare, naive_ms, long800), (dp_compare, vectorised_ms, long800),
-  (dp_compare, speedup, long800).
-Figure line to add (three panels: time per seam by step, 25 % width reduction, loops vs
-vectorised DP): ![Runtime (D6)](FIG/d6_runtime.png)
-Notes sentence to add: time per seam grows linearly with H x W, slope and R^2 from
-(fit, per_seam_total_slope, all) and (fit, per_seam_total_r2, all), as the paper says
-(Sec. 5). Keep Notes at 80 words or fewer.
--->
+![Runtime (D6): time per seam by step, 25 % width reduction, loops against vectorised DP](FIG/d6_runtime.png)
 
-Notes: The slow way is two nested Python loops over rows and columns. We loop only over rows. For each row we shift the row above left and right, stack the three copies and take one argmin, so NumPy chooses the best parent for every column at once. Horizontal seams need no extra code: we transpose the image, find a vertical seam and transpose back.
+Notes: The slow way is two nested Python loops over rows and columns. We loop only over rows: shift the row above left and right, stack the three copies and take one argmin, so NumPy picks the best parent for every column at once. That makes the DP 21 times faster at 600 by 800. Time per seam grows linearly with the number of pixels, as the paper says.
