@@ -12,56 +12,16 @@
 
 **NumPy-only core.** Filtering, energy (including the colour-to-grey conversion), dynamic programming, seam removal and seam insertion use only NumPy. OpenCV appears around this core: image file encoding and decoding, `cv2.resize` for the scaling baseline, for the upscaling step of content amplification and for preparing the photos, and `cv2.Sobel`, `cv2.Scharr` and `cv2.Laplacian` as references in the energy tests.
 
-<!--
-TODO(D6): section 4.2 waits for a run of experiments/d6_runtime.py on a data set photo.
-Fill it in from results/tables/d6_runtime.csv, then delete this comment.
-The CSV is in long format, one number per row. Header:
-section,quantity,size,height,width,value,unit,statistic,n,notes
-A cell is named below as (section, quantity, size); the number is in "value".
-Sizes: long300, long600, long800, long1200. Timings are medians (statistic, n columns).
-
 ### 4.2 Runtime (D6)
 
-Setup (1 to 2 sentences). Photo: (input, photo, "") value, its size from height/width.
-Resized with cv2.resize to long side 300, 600, 800 and 1200 px; H and W of each size from
-the height/width columns of (per_seam, pixels, longNNN). Machine: (env, cpu), (env, python),
-(env, numpy). Method: (method, timer), (method, statistic), energy settings from
-(method, energy).
+We timed our implementation on one data set photo (`insan_01_emre.jpg`, $600 \times 800$), resized with `cv2.resize` to a long side of 300, 600, 800 and 1200 pixels, on an Apple M4 with Python 3.14.7 and NumPy 2.5.5. All times are medians; the energy is Sobel on the grey image.
 
-Sentence 1, time per seam by step. For each size: (per_seam, energy_ms, longNNN),
-(per_seam, dp_ms, longNNN), (per_seam, remove_ms, longNNN), (per_seam, total_ms, longNNN).
-Name the step with the largest share: (per_seam, energy_share | dp_share | remove_share,
-longNNN). Panel (a) of the figure.
+One seam takes 3.1 ms at $225 \times 300$, 11.7 ms at $450 \times 600$, 20.9 ms at $600 \times 800$ and 46.6 ms at $900 \times 1200$. At the 800-pixel working size the DP takes 40 % of this, seam removal 39 % and the energy 21 %. A least-squares line through the four sizes has a slope of 43.0 ns per pixel and $R^2 = 1.000$ after rounding, in line with the paper's statement that seam carving is linear in the number of pixels (Section 5).
 
-Sentence 2, linear in the number of pixels (the paper's claim, Sec. 5: "Seam carving is
-linear in the number of pixels"). Fit of per-seam total time against H x W:
-(fit, per_seam_total_slope, all) in ns per pixel, (fit, per_seam_total_intercept, all) in ms,
-(fit, per_seam_total_r2, all). Panel (a).
+Reducing the width by 25 % takes 0.21 s, 1.58 s, 3.69 s and 12.27 s for 75, 150, 200 and 300 seams. This total is not linear in $H \times W$, because the number of seams also grows with the width; against the pixels actually processed it is linear again: 43.2 ns per pixel, $R^2 = 1.000$.
 
-Sentence 3, shrinking the width by 25 percent. For each size: (shrink25, seams, longNNN),
-(shrink25, total_s, longNNN), (shrink25, ms_per_seam, longNNN). Say explicitly that the
-total is NOT linear in the original H x W, because the number of seams k also grows with W.
-It is fitted against the pixels actually processed, the sum of H x (W - i) over the k seams:
-(shrink25, work_pixels, longNNN), (fit, shrink25_total_slope, all),
-(fit, shrink25_total_intercept, all), (fit, shrink25_total_r2, all). Panel (b).
+The same DP written as two nested Python loops takes 23.8 ms at $225 \times 300$ and 179.1 ms at $600 \times 800$; the vectorised version takes 1.55 ms and 8.42 ms, a factor of 15 and 21. Both give identical $M$ and `back`.
 
-Sentence 4, what vectorisation buys (DP only). At long300 and long800:
-(dp_compare, naive_ms, longNNN), (dp_compare, vectorised_ms, longNNN),
-(dp_compare, speedup, longNNN). Both versions gave identical M and back:
-(dp_compare, same_M_and_back, longNNN). Panel (c).
+The paper reports about 2.2 s for retargeting a $400 \times 500$ image to $100 \times 100$. Our code needs 2.76 s for 400 rows by 500 columns and 2.53 s for 500 by 400; the paper does not say which side is the height. The times are not directly comparable: the implementations differ and the paper does not state its hardware.
 
-Sentence 5, the paper's own example, measured with resize on the same photo: 400 x 500 to
-100 x 100. Our time: (paper, seconds_assumed, 400x500->100x100) for 400 rows x 500 columns,
-and (paper, seconds_swapped, 500x400->100x100) because the paper does not say which side is
-the height. Paper: (paper, paper_seconds, 400x500->100x100), "about 2.2 seconds".
-Ratios: (paper, paper_over_ours_assumed, 400x500->100x100),
-(paper, paper_over_ours_swapped, 500x400->100x100). Absolute times may be given, but state
-that the machines and the implementations differ: the paper's timing is from its own
-implementation, published in 2007, and the paper does not name its hardware.
-
-Figure (one, three panels: (a) time per seam by step with linear fit, (b) 25 percent width
-reduction with linear fit, (c) nested-loop vs vectorised DP):
 ![Runtime of our implementation (D6). (a) Time per seam by step against H x W, with a linear fit. (b) Total time to reduce the width by 25 %, against the pixels processed, with a linear fit. (c) DP alone: nested Python loops against the vectorised cumulative map.](FIG/d6_runtime.png)
-
-Length: 150 to 300 words. Report weak results too (for example a low R^2).
--->
