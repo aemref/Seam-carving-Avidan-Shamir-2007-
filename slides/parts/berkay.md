@@ -18,4 +18,4 @@ Notes: Object removal reuses everything before it. We only change the energy: pi
 
 ![Removal without and with the protection mask (D5)](FIG/d5_protect_nesne_01_berkay.png)
 
-Notes: The fountain sits right next to the obelisk, so we painted it red. A seam through one red pixel costs more than the whole green mask can save, so seams go around it; the figure compares the result without and with this mask. Painted masks are never perfect, so we can grow the removal mask by a few pixels with a max filter from Week 6. Keep in mind that each seam runs through the whole picture, so the rest of the scene shifts slightly too.
+Notes: The fountain sits right next to the obelisk, so we painted it red. A seam through one red pixel costs more than the whole green mask can save, so seams go around it; the figure compares both results. Painted masks are never perfect, so we can grow the removal mask with the Week 6 max filter. Each seam runs through the whole picture, so the rest of the scene shifts slightly too.
