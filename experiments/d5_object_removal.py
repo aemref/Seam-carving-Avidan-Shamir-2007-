@@ -21,6 +21,7 @@ meant as an order of magnitude next to the seam count, D6 measures runtime prope
 """
 
 import time
+import warnings
 from typing import NamedTuple
 
 import numpy as np
@@ -42,6 +43,7 @@ CSV_HEADER = (
     "mask_area_percent",
     "direction",
     "n_seams",
+    "pixels_left",
     "seconds",
 )
 
@@ -59,6 +61,7 @@ class Run(NamedTuple):
     dilate: int
     restore_size: bool
     result: object_removal.RemovalResult
+    pixels_left: int  # removal pixels kept because no seam reaches them without protection
     seconds: float
 
 
@@ -123,11 +126,28 @@ def timed_run(
     restore_size: bool,
     dilate: int = 0,
 ) -> Run:
-    start = time.perf_counter()
-    result = object_removal.remove_object(
-        scene.image, scene.remove, protect, restore_size=restore_size, dilate=dilate
-    )
-    return Run(variant, protect, dilate, restore_size, result, time.perf_counter() - start)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        start = time.perf_counter()
+        result = object_removal.remove_object(
+            scene.image, scene.remove, protect, restore_size=restore_size, dilate=dilate
+        )
+        seconds = time.perf_counter() - start
+    pixels_left = unreachable_pixel_count(caught)
+    return Run(variant, protect, dilate, restore_size, result, pixels_left, seconds)
+
+
+def unreachable_pixel_count(caught: list[warnings.WarningMessage]) -> int:
+    """Sum UnreachablePixelsWarning counts; show every other caught warning as usual."""
+    pixels_left = 0
+    for warning in caught:
+        if isinstance(warning.message, object_removal.UnreachablePixelsWarning):
+            pixels_left += warning.message.pixels_left
+        else:
+            warnings.showwarning(
+                warning.message, warning.category, warning.filename, warning.lineno
+            )
+    return pixels_left
 
 
 def save_removal_figure(scene: Scene, removed: Run, restored: Run) -> None:
@@ -156,7 +176,10 @@ def save_protect_figure(scene: Scene, unprotected: Run, protected: Run) -> None:
 
 
 def run_label(title: str, run: Run) -> str:
-    return f"{title}: {run.result.n_seams} {run.result.direction} seams"
+    label = f"{title}: {run.result.n_seams} {run.result.direction} seams"
+    if run.pixels_left:
+        label += f", {run.pixels_left} px kept"
+    return label
 
 
 def mask_overlay(
@@ -180,6 +203,7 @@ def table_row(scene: Scene, run: Run) -> tuple:
         round(100 * float(scene.remove.mean()), 2),
         run.result.direction,
         run.result.n_seams,
+        run.pixels_left,
         round(run.seconds, 3),
     )
 
