@@ -216,8 +216,201 @@ def test_seams_needed_returns_python_ints():
     assert type(n_horizontal) is int
 
 
-def test_remove_object_is_not_implemented_yet():
-    image = np.zeros((*ENERGY.shape, 3), dtype=np.uint8)
+# Synthetic scene for remove_object: a smooth low-energy ramp (values <= 100), a textured
+# "object" (200-255), a separate textured "protected" block (150-160) and, around the object,
+# an optional one-pixel halo (180) that is not in the removal mask.
+SCENE_HEIGHT, SCENE_WIDTH = 24, 36
+BACKGROUND_RANGE = (30, 100)
+OBJECT_VALUES = (200, 255)
+PROTECTED_VALUES = (150, 160)
+HALO_VALUE = 180
+OBJECT_REGION = (slice(8, 16), slice(10, 16))  # 8 rows x 6 columns: vertical seams are fewer
+OBJECT_WIDTH = 6
+WIDE_FLAT_OBJECT_REGION = (slice(10, 12), slice(4, 18))  # 2 rows x 14 columns
+HALO_REGION = (slice(7, 17), slice(9, 17))  # OBJECT_REGION grown by one pixel
+PROTECTED_REGION = (slice(6, 18), slice(24, 29))
 
-    with pytest.raises(NotImplementedError):
-        remove_object(image, mask_from_pixels(REMOVAL_PIXELS))
+
+def make_scene(object_region=OBJECT_REGION, with_halo=False):
+    rng = np.random.default_rng(0)
+    ramp = np.linspace(*BACKGROUND_RANGE, SCENE_WIDTH)
+    gray = np.rint(np.tile(ramp, (SCENE_HEIGHT, 1))).astype(np.uint8)
+    if with_halo:
+        gray[HALO_REGION] = HALO_VALUE
+    gray[object_region] = textured_patch(rng, object_region, OBJECT_VALUES)
+    gray[PROTECTED_REGION] = textured_patch(rng, PROTECTED_REGION, PROTECTED_VALUES)
+    return np.repeat(gray[..., np.newaxis], 3, axis=2)
+
+
+def textured_patch(rng, region, value_range):
+    shape = np.zeros((SCENE_HEIGHT, SCENE_WIDTH))[region].shape
+    low, high = value_range
+    return rng.integers(low, high + 1, size=shape, dtype=np.uint8)
+
+
+def region_mask(region):
+    mask = np.zeros((SCENE_HEIGHT, SCENE_WIDTH), dtype=bool)
+    mask[region] = True
+    return mask
+
+
+def count_values_between(img, value_range):
+    low, high = value_range
+    gray = img[..., 0] if img.ndim == 3 else img
+    return int(np.count_nonzero((gray >= low) & (gray <= high)))
+
+
+def remove_scene_object(**kwargs):
+    return remove_object(make_scene(), region_mask(OBJECT_REGION), restore_size=False, **kwargs)
+
+
+def test_removal_leaves_no_object_pixels():
+    result = remove_scene_object()
+
+    assert count_values_between(result.image, OBJECT_VALUES) == 0
+
+
+def test_removal_narrows_image_by_seam_count():
+    result = remove_scene_object()
+
+    assert result.direction == "vertical"
+    assert result.image.shape == (SCENE_HEIGHT, SCENE_WIDTH - result.n_seams, 3)
+    assert result.image.dtype == np.uint8
+
+
+def test_removal_needs_at_least_object_width_seams():
+    result = remove_scene_object()
+
+    assert result.n_seams >= OBJECT_WIDTH
+
+
+def test_protected_block_survives_removal():
+    scene = make_scene()
+    protected_before = count_values_between(scene, PROTECTED_VALUES)
+
+    result = remove_scene_object(protect_mask=region_mask(PROTECTED_REGION))
+
+    assert count_values_between(result.image, PROTECTED_VALUES) == protected_before
+
+
+def test_restore_size_returns_input_shape():
+    scene = make_scene()
+
+    result = remove_object(scene, region_mask(OBJECT_REGION), restore_size=True)
+
+    assert result.image.shape == scene.shape
+    assert result.n_seams >= OBJECT_WIDTH
+
+
+def test_auto_direction_picks_horizontal_for_wide_flat_object():
+    scene = make_scene(WIDE_FLAT_OBJECT_REGION)
+
+    result = remove_object(scene, region_mask(WIDE_FLAT_OBJECT_REGION), restore_size=False)
+
+    assert result.direction == "horizontal"
+    assert result.image.shape == (SCENE_HEIGHT - result.n_seams, SCENE_WIDTH, 3)
+    assert count_values_between(result.image, OBJECT_VALUES) == 0
+
+
+def test_explicit_direction_overrides_auto():
+    result = remove_scene_object(direction="horizontal")
+
+    assert result.direction == "horizontal"
+    assert result.image.shape == (SCENE_HEIGHT - result.n_seams, SCENE_WIDTH, 3)
+    assert count_values_between(result.image, OBJECT_VALUES) == 0
+
+
+def test_dilate_also_removes_halo_that_plain_mask_leaves():
+    scene = make_scene(with_halo=True)
+    halo = (HALO_VALUE, HALO_VALUE)
+
+    plain = remove_object(scene, region_mask(OBJECT_REGION), restore_size=False)
+    dilated = remove_object(scene, region_mask(OBJECT_REGION), restore_size=False, dilate=1)
+
+    assert count_values_between(plain.image, halo) > 0
+    assert count_values_between(dilated.image, halo) == 0
+
+
+def test_works_on_grayscale_image():
+    gray_scene = make_scene()[..., 0]
+
+    result = remove_object(gray_scene, region_mask(OBJECT_REGION), restore_size=False)
+
+    assert result.image.shape == (SCENE_HEIGHT, SCENE_WIDTH - result.n_seams)
+    assert count_values_between(result.image, OBJECT_VALUES) == 0
+
+
+def test_empty_removal_mask_returns_unchanged_copy():
+    scene = make_scene()
+
+    result = remove_object(scene, np.zeros((SCENE_HEIGHT, SCENE_WIDTH), dtype=bool))
+
+    assert result.n_seams == 0
+    np.testing.assert_array_equal(result.image, scene)
+    assert not np.shares_memory(result.image, scene)
+
+
+def test_removal_pixels_under_protection_are_not_removed():
+    scene = make_scene()
+
+    result = remove_object(
+        scene, region_mask(OBJECT_REGION), protect_mask=region_mask(OBJECT_REGION)
+    )
+
+    assert result.n_seams == 0
+    np.testing.assert_array_equal(result.image, scene)
+
+
+def test_inputs_are_not_modified():
+    scene = make_scene()
+    remove_mask = region_mask(OBJECT_REGION)
+    protect_mask = region_mask(PROTECTED_REGION)
+
+    remove_object(scene, remove_mask, protect_mask, dilate=1)
+
+    np.testing.assert_array_equal(scene, make_scene())
+    np.testing.assert_array_equal(remove_mask, region_mask(OBJECT_REGION))
+    np.testing.assert_array_equal(protect_mask, region_mask(PROTECTED_REGION))
+
+
+def test_energy_fn_receives_carved_remove_and_protect_masks():
+    carry_shapes = []
+
+    def recording_energy_fn(img, carry):
+        carry_shapes.append(tuple(mask.shape for mask in carry))
+        return np.zeros(img.shape[:2])
+
+    remove_scene_object(energy_fn=recording_energy_fn)
+
+    assert carry_shapes[0] == ((SCENE_HEIGHT, SCENE_WIDTH),) * 2
+    assert carry_shapes[1] == ((SCENE_HEIGHT, SCENE_WIDTH - 1),) * 2
+
+
+def test_mask_that_never_clears_raises_instead_of_looping():
+    remove_mask = np.zeros((SCENE_HEIGHT, SCENE_WIDTH), dtype=bool)
+    remove_mask[:, -1] = True
+
+    def first_column_seam(energy):
+        return np.zeros(energy.shape[0], dtype=np.int64)
+
+    with pytest.raises(RuntimeError, match="removal pixels are left"):
+        remove_object(make_scene(), remove_mask, seam_fn=first_column_seam)
+
+
+@pytest.mark.parametrize("mask_argument", ["remove_mask", "protect_mask"])
+def test_remove_object_rejects_mask_of_wrong_shape(mask_argument):
+    masks = {"remove_mask": region_mask(OBJECT_REGION), "protect_mask": None}
+    masks[mask_argument] = np.zeros(WRONG_SHAPE, dtype=bool)
+
+    with pytest.raises(ValueError, match="does not match"):
+        remove_object(make_scene(), **masks)
+
+
+@pytest.mark.parametrize(
+    ("option", "value"),
+    [("direction", "diagonal"), ("dilate", -1)],
+    ids=["unknown_direction", "negative_dilate"],
+)
+def test_remove_object_rejects_bad_options(option, value):
+    with pytest.raises(ValueError):
+        remove_object(make_scene(), region_mask(OBJECT_REGION), **{option: value})

@@ -1,0 +1,88 @@
+section,quantity,size,height,width,value,unit,statistic,n,notes
+env,cpu,,,,Apple M4,,,,
+env,logical_cpus,,,,10,,,,
+env,os,,,,macOS-26.6.2-arm64-arm-64bit-Mach-O,,,,
+env,python,,,,3.14.7,,,,
+env,numpy,,,,2.5.5,,,,
+env,opencv,,,,5.1.0,,,,
+env,matplotlib,,,,3.11.2,,,,
+env,run_date,,,,2026-11-23,,,,
+method,timer,,,,time.perf_counter,,,,
+method,warm_up,,,,one untimed call before each measurement (shrink: k=1; paper: 1 seam each way),,,,
+method,statistic,,,,median over repeats,,,,
+method,step_seams,,,,10,,,,
+method,step_repeats,,,,3,,,,
+method,naive_repeats,,,,3,,,,
+method,vector_repeats,,,,20,,,,
+method,shrink_fraction,,,,0.25,,,,
+method,shrink_repeats,,,,3,,,,
+method,paper_repeats,,,,3,,,,
+method,energy,,,,energy.compute_energy with its defaults: method=sobel color=gray blur_sigma=0.0 norm=l1,,,,
+input,photo,,600,800,insan_01_emre.jpg,,,,"first landscape photo (W >= H) among emre's photos, in file-name order"
+per_seam,pixels,long300,225,300,67500,px,,,
+per_seam,energy_ms,long300,225,300,0.4927,ms,median,30,
+per_seam,dp_ms,long300,225,300,1.543,ms,median,30,
+per_seam,remove_ms,long300,225,300,1.095,ms,median,30,
+per_seam,total_ms,long300,225,300,3.128,ms,median,30,
+per_seam,energy_share,long300,225,300,15.7,%,median ratio,30,share of energy + dp + remove
+per_seam,dp_share,long300,225,300,49.3,%,median ratio,30,share of energy + dp + remove
+per_seam,remove_share,long300,225,300,35.0,%,median ratio,30,share of energy + dp + remove
+shrink25,seams,long300,225,300,75,seams,,,
+shrink25,work_pixels,long300,225,300,4438125,px,,,sum of H x W over the k seams
+shrink25,total_s,long300,225,300,0.2108,s,median,3,
+shrink25,ms_per_seam,long300,225,300,2.811,ms,median / k,3,
+dp_compare,naive_ms,long300,225,300,23.82,ms,median,3,two nested Python loops
+dp_compare,vectorised_ms,long300,225,300,1.551,ms,median,20,seam.cumulative_map
+dp_compare,speedup,long300,225,300,15.36,x,ratio of medians,,
+dp_compare,same_M_and_back,long300,225,300,True,,,,np.array_equal on M and back
+per_seam,pixels,long600,450,600,270000,px,,,
+per_seam,energy_ms,long600,450,600,2.374,ms,median,30,
+per_seam,dp_ms,long600,450,600,4.93,ms,median,30,
+per_seam,remove_ms,long600,450,600,4.438,ms,median,30,
+per_seam,total_ms,long600,450,600,11.69,ms,median,30,
+per_seam,energy_share,long600,450,600,20.2,%,median ratio,30,share of energy + dp + remove
+per_seam,dp_share,long600,450,600,42.0,%,median ratio,30,share of energy + dp + remove
+per_seam,remove_share,long600,450,600,37.8,%,median ratio,30,share of energy + dp + remove
+shrink25,seams,long600,450,600,150,seams,,,
+shrink25,work_pixels,long600,450,600,35471250,px,,,sum of H x W over the k seams
+shrink25,total_s,long600,450,600,1.578,s,median,3,
+shrink25,ms_per_seam,long600,450,600,10.52,ms,median / k,3,
+per_seam,pixels,long800,600,800,480000,px,,,
+per_seam,energy_ms,long800,600,800,4.35,ms,median,30,
+per_seam,dp_ms,long800,600,800,8.379,ms,median,30,
+per_seam,remove_ms,long800,600,800,8.038,ms,median,30,
+per_seam,total_ms,long800,600,800,20.87,ms,median,30,
+per_seam,energy_share,long800,600,800,20.9,%,median ratio,30,share of energy + dp + remove
+per_seam,dp_share,long800,600,800,40.3,%,median ratio,30,share of energy + dp + remove
+per_seam,remove_share,long800,600,800,38.7,%,median ratio,30,share of energy + dp + remove
+shrink25,seams,long800,600,800,200,seams,,,
+shrink25,work_pixels,long800,600,800,84060000,px,,,sum of H x W over the k seams
+shrink25,total_s,long800,600,800,3.687,s,median,3,
+shrink25,ms_per_seam,long800,600,800,18.44,ms,median / k,3,
+dp_compare,naive_ms,long800,600,800,179.1,ms,median,3,two nested Python loops
+dp_compare,vectorised_ms,long800,600,800,8.424,ms,median,20,seam.cumulative_map
+dp_compare,speedup,long800,600,800,21.26,x,ratio of medians,,
+dp_compare,same_M_and_back,long800,600,800,True,,,,np.array_equal on M and back
+per_seam,pixels,long1200,900,1200,1080000,px,,,
+per_seam,energy_ms,long1200,900,1200,10.53,ms,median,30,
+per_seam,dp_ms,long1200,900,1200,17.63,ms,median,30,
+per_seam,remove_ms,long1200,900,1200,18.49,ms,median,30,
+per_seam,total_ms,long1200,900,1200,46.64,ms,median,30,
+per_seam,energy_share,long1200,900,1200,22.6,%,median ratio,30,share of energy + dp + remove
+per_seam,dp_share,long1200,900,1200,37.8,%,median ratio,30,share of energy + dp + remove
+per_seam,remove_share,long1200,900,1200,39.6,%,median ratio,30,share of energy + dp + remove
+shrink25,seams,long1200,900,1200,300,seams,,,
+shrink25,work_pixels,long1200,900,1200,283635000,px,,,sum of H x W over the k seams
+shrink25,total_s,long1200,900,1200,12.27,s,median,3,
+shrink25,ms_per_seam,long1200,900,1200,40.9,ms,median / k,3,
+fit,per_seam_total_slope,all,,,43.02,ns per pixel,,4,least squares over the 4 sizes: per_seam total_ms against pixels H x W
+fit,per_seam_total_intercept,all,,,0.1723,ms,,4,least squares over the 4 sizes: per_seam total_ms against pixels H x W
+fit,per_seam_total_r2,all,,,1.0,,,4,least squares over the 4 sizes: per_seam total_ms against pixels H x W
+fit,shrink25_total_slope,all,,,43.15,ns per pixel,,4,least squares over the 4 sizes: shrink25 total_s against shrink25 work_pixels
+fit,shrink25_total_intercept,all,,,40.01,ms,,4,least squares over the 4 sizes: shrink25 total_s against shrink25 work_pixels
+fit,shrink25_total_r2,all,,,1.0,,,4,least squares over the 4 sizes: shrink25 total_s against shrink25 work_pixels
+paper,seconds_assumed,400x500->100x100,400,500,2.759,s,median,3,H x W = rows x columns (assumption for the paper)
+paper,paper_over_ours_assumed,400x500->100x100,400,500,0.7973,ratio,,,paper 2.2 s / our time
+paper,seconds_swapped,500x400->100x100,500,400,2.527,s,median,3,H x W = rows x columns
+paper,paper_over_ours_swapped,500x400->100x100,500,400,0.8707,ratio,,,paper 2.2 s / our time
+paper,paper_seconds,400x500->100x100,,,2.2,s,,,"Avidan & Shamir 2007, Sec. 5; the paper does not state its hardware"
