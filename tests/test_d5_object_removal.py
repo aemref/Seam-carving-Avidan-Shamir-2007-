@@ -127,6 +127,20 @@ def test_table_row_records_removal_of_painted_object(dataset):
     assert int(removed["n_seams"]) >= object_width
     assert float(removed["mask_area_percent"]) == round(object_area_percent, 2)
     assert removed["protect_mask"] == "no" and removed["restore_size"] == "no"
+    assert removed["pixels_left"] == "0"
+
+
+def test_table_records_removal_pixels_kept_by_protection(dataset):
+    trap_below_object = (slice(16, 17), slice(4, 22))
+    write_photo(dataset, WITH_PROTECT)
+    write_mask(dataset, WITH_PROTECT, "remove", OBJECT_REGION)
+    write_mask(dataset, WITH_PROTECT, "protect", trap_below_object)
+
+    d5_object_removal.main()
+
+    pixels_left = {row["variant"]: int(row["pixels_left"]) for row in table_rows(dataset)}
+    assert pixels_left["removed"] > 0
+    assert pixels_left["removed_without_protect"] == 0
 
 
 def test_mask_overlay_tints_only_masked_pixels():
