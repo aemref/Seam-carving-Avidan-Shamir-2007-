@@ -1,0 +1,5 @@
+file,category,person,source_name,orig_width,orig_height,width,height
+insan_01_ahsen.jpg,insan,ahsen,insan/insan_1.jpeg,2048,1425,800,557
+manzara_01_ahsen.jpg,manzara,ahsen,manzara/manzara_2.jpeg,2040,1530,800,600
+mimari_01_ahsen.jpg,mimari,ahsen,mimari/mimari_3.jpeg,1600,1200,800,600
+nesne_01_ahsen.jpg,nesne,ahsen,nesne/nesne_3.jpeg,900,1600,450,800
