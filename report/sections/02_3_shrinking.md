@@ -1,4 +1,4 @@
-## Shrinking
+## 2.3 Shrinking
 
 To reduce the width of an image by k pixels, we remove k vertical seams one after another
 (paper Section 4.1). Each step computes the energy map of the current image, finds the
