@@ -5,9 +5,9 @@
 - Repeat k times: width shrinks by k, important content stays
 - We implemented it from scratch in NumPy: energy, DP, shrink, enlarge, object removal
 
-![Width −25 % on `insan_01_ahsen` with five energy operators: the person is kept every time](FIG/d1_carved_insan_01_ahsen.png)
+![Width −25 % on `manzara_01_ahsen` with five energy operators: the house and the willow stay](FIG/d1_carved_manzara_01_ahsen.png)
 
-Notes: An image often has to fit a different aspect ratio. Scaling makes people thin, cropping cuts them off. Seam carving removes a path from top to bottom that bends around important content and goes through flat areas like sky or a wall. Here the photo lost a quarter of its width with five different energies, and the person is untouched in all of them. Everything you will see is our own NumPy code.
+Notes: An image often has to fit a different aspect ratio. Scaling makes people thin, cropping cuts them off. Seam carving removes a path from top to bottom that bends around important content and goes through flat areas like sky or water. Here the photo lost a quarter of its width with five different energies, and the house and the willow keep their shape. Everything you will see is our own NumPy code.
 
 ## The Energy Map Is a Gradient
 
