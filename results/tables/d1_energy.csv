@@ -1,0 +1,25 @@
+image,method,energy_ms,mean_kept_sobel_energy,mean_all_sobel_energy
+manzara_01_ahsen,forward,17.23,64.958,56.605
+manzara_01_ahsen,roberts,23.68,65.091,56.605
+manzara_01_ahsen,sobel,24.02,66.611,56.605
+manzara_01_ahsen,scharr,23.46,66.631,56.605
+manzara_01_ahsen,laplacian,16.93,62.494,56.605
+manzara_01_ahsen,sobel sum,83.65,66.576,56.605
+manzara_01_ahsen,sobel gray blur 1.5,76.62,64.339,56.605
+manzara_01_ahsen,sobel gray l2,38.94,66.601,56.605
+mimari_01_ahsen,forward,18.95,127.169,111.449
+mimari_01_ahsen,roberts,27.86,127.245,111.449
+mimari_01_ahsen,sobel,42.57,130.876,111.449
+mimari_01_ahsen,scharr,26.67,130.850,111.449
+mimari_01_ahsen,laplacian,26.07,123.325,111.449
+mimari_01_ahsen,sobel sum,71.44,130.863,111.449
+mimari_01_ahsen,sobel gray blur 1.5,119.26,125.617,111.449
+mimari_01_ahsen,sobel gray l2,32.44,130.720,111.449
+insan_01_ahsen,forward,16.28,122.277,109.922
+insan_01_ahsen,roberts,20.64,122.479,109.922
+insan_01_ahsen,sobel,30.15,127.244,109.922
+insan_01_ahsen,scharr,27.59,127.168,109.922
+insan_01_ahsen,laplacian,30.37,116.296,109.922
+insan_01_ahsen,sobel sum,65.18,126.990,109.922
+insan_01_ahsen,sobel gray blur 1.5,100.47,121.299,109.922
+insan_01_ahsen,sobel gray l2,31.13,127.158,109.922
