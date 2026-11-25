@@ -7,6 +7,7 @@ the ordinary energies holds for any energy scale.
 """
 
 import operator
+import warnings
 from typing import NamedTuple
 
 import cv2
@@ -34,6 +35,17 @@ class RemovalResult(NamedTuple):
     image: np.ndarray
     n_seams: int
     direction: str  # "vertical" | "horizontal"
+
+
+class UnreachablePixelsWarning(UserWarning):
+    """Removal pixels that no seam can reach without crossing the protection mask were kept."""
+
+    def __init__(self, pixels_left: int) -> None:
+        super().__init__(
+            f"{pixels_left} removal pixels cannot be reached without crossing the protection "
+            "mask; they are left in the image"
+        )
+        self.pixels_left = pixels_left
 
 
 def apply_mask_weights(
@@ -130,6 +142,11 @@ def remove_object(
     `apply_mask_weights` and finds the seam with seam_fn. Like any seam carving, this changes
     the whole image, not only the masked region (paper section 4.6).
 
+    Removal pixels that no seam can reach without crossing the protection mask (for example
+    pixels directly above a wide protected region) are kept, protection wins: as soon as a
+    seam would remove no removal pixel, carving stops with UnreachablePixelsWarning, whose
+    `pixels_left` attribute holds their number.
+
     Args:
         img: (H, W) or (H, W, C) image (not modified).
         remove_mask: (H, W) bool, pixels to remove.
@@ -150,6 +167,9 @@ def remove_object(
     Raises:
         ValueError: bad image or mask shape, unknown direction or negative `dilate`.
         RuntimeError: the mask is still not cleared after W - 1 (or H - 1) seams.
+
+    Warns:
+        UnreachablePixelsWarning: removal pixels were kept because of the protection mask.
     """
     img = _validated_image(img)
     remove, protect = _prepared_masks(remove_mask, protect_mask, img.shape[:2], dilate)
@@ -227,19 +247,27 @@ def _carve_until_cleared(
 ) -> np.ndarray:
     """Remove one seam at a time until masks[0] (the removal mask) is empty; return the image.
 
-    Stops with RuntimeError after the last seam the image can lose (W - 1 or H - 1), so a mask
-    that never clears cannot cause an endless loop.
+    A seam that removes no removal pixel means the pixels left cannot be reached without
+    crossing the protection mask (the weights guarantee this for the optimal seam). That seam
+    is discarded and the loop stops with UnreachablePixelsWarning; otherwise it would keep
+    carving the whole image and, once it is narrow enough, cut protected pixels. Stops with
+    RuntimeError after the last seam the image can lose (W - 1 or H - 1).
     """
     shrink = _SHRINKERS[direction]
     max_seams = img.shape[_SEAM_AXIS[direction]] - 1
     carved, carry = img.copy(), masks
     for _ in range(max_seams):
-        if not carry[0].any():
-            break
+        pixels_left = np.count_nonzero(carry[0])
+        if pixels_left == 0:
+            return carved
         result = shrink(carved, 1, energy_fn=energy_fn, seam_fn=seam_fn, carry=carry)
+        if np.count_nonzero(result.carry[0]) == pixels_left:
+            warnings.warn(UnreachablePixelsWarning(pixels_left), stacklevel=3)
+            return carved
         carved, carry = result.image, result.carry
     if carry[0].any():
         raise RuntimeError(
-            f"{int(carry[0].sum())} removal pixels are left after {max_seams} {direction} seams"
+            f"{np.count_nonzero(carry[0])} removal pixels are left after {max_seams} "
+            f"{direction} seams"
         )
     return carved

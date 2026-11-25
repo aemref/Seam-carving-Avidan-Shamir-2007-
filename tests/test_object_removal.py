@@ -5,7 +5,12 @@ from collections.abc import Iterator
 import numpy as np
 import pytest
 
-from seamcarving.object_removal import apply_mask_weights, remove_object, seams_needed
+from seamcarving.object_removal import (
+    UnreachablePixelsWarning,
+    apply_mask_weights,
+    remove_object,
+    seams_needed,
+)
 
 # Small hand-built energy map with negative values; max|e| = 5.
 ENERGY = np.array(
@@ -386,15 +391,47 @@ def test_energy_fn_receives_carved_remove_and_protect_masks():
     assert carry_shapes[1] == ((SCENE_HEIGHT, SCENE_WIDTH - 1),) * 2
 
 
-def test_mask_that_never_clears_raises_instead_of_looping():
+def test_mask_needing_more_seams_than_the_image_allows_raises():
+    full_row = np.zeros((SCENE_HEIGHT, SCENE_WIDTH), dtype=bool)
+    full_row[SCENE_HEIGHT // 2] = True  # every vertical seam removes exactly one of its pixels
+
+    with pytest.raises(RuntimeError, match="removal pixels are left"):
+        remove_object(make_scene(), full_row, direction="vertical")
+
+
+def test_seam_that_removes_no_mask_pixel_stops_carving_with_warning():
     remove_mask = np.zeros((SCENE_HEIGHT, SCENE_WIDTH), dtype=bool)
     remove_mask[:, -1] = True
+    scene = make_scene()
 
     def first_column_seam(energy):
         return np.zeros(energy.shape[0], dtype=np.int64)
 
-    with pytest.raises(RuntimeError, match="removal pixels are left"):
-        remove_object(make_scene(), remove_mask, seam_fn=first_column_seam)
+    with pytest.warns(UnreachablePixelsWarning) as caught:
+        result = remove_object(scene, remove_mask, seam_fn=first_column_seam)
+
+    assert caught[0].message.pixels_left == SCENE_HEIGHT
+    assert result.n_seams == 0
+    np.testing.assert_array_equal(result.image, scene)
+
+
+# A protected bar right below the object: every downward path from the object's lowest rows
+# crosses it, so those removal pixels cannot be reached without cutting protection.
+TRAP_BAR_REGION = (slice(16, 17), slice(4, 22))
+
+
+def test_unreachable_removal_pixels_are_kept_and_protection_holds():
+    scene = make_scene()
+    scene[TRAP_BAR_REGION] = PROTECTED_VALUES[0]
+    protected_before = count_values_between(scene, PROTECTED_VALUES)
+    protect_mask = region_mask(TRAP_BAR_REGION) | region_mask(PROTECTED_REGION)
+
+    with pytest.warns(UnreachablePixelsWarning) as caught:
+        result = remove_object(scene, region_mask(OBJECT_REGION), protect_mask, restore_size=False)
+
+    assert caught[0].message.pixels_left > 0
+    assert count_values_between(result.image, PROTECTED_VALUES) == protected_before
+    assert result.n_seams < OBJECT_WIDTH + SCENE_HEIGHT
 
 
 @pytest.mark.parametrize("mask_argument", ["remove_mask", "protect_mask"])
