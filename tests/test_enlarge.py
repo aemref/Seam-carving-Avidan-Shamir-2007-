@@ -1,4 +1,4 @@
-"""Unit tests for seamcarving.enlarge (Dalga 1: no real carve module needed)."""
+"""Unit tests for seamcarving.enlarge: fake-carve unit tests and real-module tests (5.1)."""
 
 import numpy as np
 import pytest
@@ -221,6 +221,9 @@ def test_enlarge_width_single_step(recorded):
         (10, 6, 0.2, [2, 2, 2]),  # floor(2.0), floor(2.4), floor(2.8)
         (10, 3, 0.05, [1, 1, 1]),  # floor(0.5) = 0 -> at least 1
         (8, 10, 0.75, [6, 4]),  # floor(6.0) = 6, then min(4, floor(10.5))
+        (10, 10, 1.0, [9, 1]),  # k = W: capped at W - 1, the rest in the next step
+        (10, 15, 1.0, [9, 6]),  # k = 1.5 W: 10 -> 19, then min(6, 19, 18)
+        (8, 6, 1.0, [6]),  # +75% with max_step=1.0 is still a single step
     ],
 )
 def test_enlarge_width_multi_step(recorded, w, k, max_step, steps):
@@ -314,3 +317,104 @@ def test_amplify_content_scale_one_and_invalid():
 def test_enlarge_uses_carve_module_attribute():
     # enlarge must call carve.shrink_width at call time so tests can monkeypatch it
     assert enlarge.carve.__name__ == "seamcarving.carve"
+
+
+# ------------------------------------------------ real carve/energy/seam modules (Dalga 2b, 5.1)
+
+BG = 128
+
+
+def textured_square_image(h, w, top, left, size, channels=3, seed=0):
+    """Flat background with a random-texture square (high energy inside and on its border)."""
+    rng = np.random.default_rng(seed)
+    img = np.full((h, w, channels), BG, dtype=np.uint8)
+    img[top : top + size, left : left + size] = rng.integers(160, 256, size=(size, size, channels))
+    return img
+
+
+@pytest.mark.parametrize("tail", [(), (3,)])
+def test_real_enlarge_width_shape(tail):
+    rng = np.random.default_rng(0)
+    img = rng.integers(0, 256, size=(12, 16, *tail), dtype=np.uint8)
+    out = enlarge_width(img, 5)
+    assert out.shape == (12, 21, *tail)
+    assert out.dtype == np.uint8
+
+
+def test_real_enlarge_width_multi_step_shape():
+    rng = np.random.default_rng(1)
+    img = rng.integers(0, 256, size=(10, 12, 3), dtype=np.uint8)
+    out = enlarge_width(img, 15, max_step=0.5)  # steps 6, 9
+    assert out.shape == (10, 27, 3)
+
+
+@pytest.mark.parametrize("tail", [(), (3,)])
+def test_real_enlarge_height_shape(tail):
+    rng = np.random.default_rng(2)
+    img = rng.integers(0, 256, size=(14, 10, *tail), dtype=np.uint8)
+    out = enlarge_height(img, 4)
+    assert out.shape == (18, 10, *tail)
+    assert out.dtype == np.uint8
+
+
+@pytest.mark.parametrize("tail", [(), (3,)])
+def test_real_amplify_content_same_shape(tail):
+    rng = np.random.default_rng(3)
+    img = rng.integers(0, 256, size=(15, 20, *tail), dtype=np.uint8)
+    out = amplify_content(img, scale=1.2)
+    assert out.shape == img.shape
+    assert out.dtype == img.dtype
+
+
+def test_real_square_keeps_width_after_enlarge_width():
+    # 30 columns, square of width 6 at cols 12..17; about 2 columns on each side of the square
+    # carry gradient energy, leaving ~20 zero-energy background columns for 6 seams.
+    size = 6
+    img = textured_square_image(20, 30, top=7, left=12, size=size)
+    out = enlarge_width(img, 6)
+    assert out.shape == (20, 36, 3)
+    non_bg_cols = np.flatnonzero(np.any(out != BG, axis=(0, 2)))
+    assert non_bg_cols.size == size
+    assert np.all(np.diff(non_bg_cols) == 1)  # square is still contiguous
+    c0 = non_bg_cols[0]
+    np.testing.assert_array_equal(
+        out[7 : 7 + size, c0 : c0 + size], img[7 : 7 + size, 12 : 12 + size]
+    )
+
+
+def test_real_square_keeps_height_after_enlarge_height():
+    size = 6
+    img = textured_square_image(30, 20, top=12, left=7, size=size)
+    out = enlarge_height(img, 6)
+    assert out.shape == (36, 20, 3)
+    non_bg_rows = np.flatnonzero(np.any(out != BG, axis=(1, 2)))
+    assert non_bg_rows.size == size
+    r0 = non_bg_rows[0]
+    np.testing.assert_array_equal(
+        out[r0 : r0 + size, 7 : 7 + size], img[12 : 12 + size, 7 : 7 + size]
+    )
+
+
+@pytest.mark.parametrize("k_factor", [1.0, 1.5])
+def test_real_enlarge_width_max_step_one_large_k(k_factor):
+    rng = np.random.default_rng(0)
+    img = rng.integers(0, 256, size=(10, 12, 3), dtype=np.uint8)
+    k = int(k_factor * 12)
+    out = enlarge_width(img, k, max_step=1.0)
+    assert out.shape == (10, 12 + k, 3)
+
+
+def test_real_enlarge_height_max_step_one_k_equals_h():
+    img = np.random.default_rng(1).integers(0, 256, size=(8, 10), dtype=np.uint8)
+    assert enlarge_height(img, 8, max_step=1.0).shape == (16, 10)
+
+
+@pytest.mark.parametrize("max_step", [0.5, 1.0])
+def test_single_column_or_row_raises_clear_error(max_step):
+    col = np.zeros((5, 1, 3), dtype=np.uint8)
+    with pytest.raises(ValueError, match="1 pixel wide"):
+        enlarge_width(col, 3, max_step=max_step)
+    row = np.zeros((1, 5), dtype=np.uint8)
+    with pytest.raises(ValueError, match="1 pixel high"):
+        enlarge_height(row, 3, max_step=max_step)
+    np.testing.assert_array_equal(enlarge_width(col, 0), col)  # k = 0 is still a plain copy

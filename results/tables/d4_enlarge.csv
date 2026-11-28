@@ -1,0 +1,15 @@
+photo,method,seconds
+manzara_01_furkan,naive_repeat_+50,18.615
+manzara_01_furkan,kseam_+50,10.393
+manzara_01_furkan,scale_+50,0.003
+manzara_01_furkan,kseam_+75_max_step_1.0,13.933
+manzara_01_furkan,kseam_+75_max_step_0.5,19.64
+manzara_01_furkan,scale_+75,0.002
+manzara_01_furkan,amplify_1.3,19.306
+mimari_01_furkan,naive_repeat_+50,18.296
+mimari_01_furkan,kseam_+50,10.346
+mimari_01_furkan,scale_+50,0.002
+mimari_01_furkan,kseam_+75_max_step_1.0,13.438
+mimari_01_furkan,kseam_+75_max_step_0.5,19.383
+mimari_01_furkan,scale_+75,0.002
+mimari_01_furkan,amplify_1.3,19.728

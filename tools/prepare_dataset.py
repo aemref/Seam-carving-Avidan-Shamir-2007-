@@ -386,12 +386,62 @@ def format_summary(summary: Summary, root: Path) -> str:
     return "\n".join(lines)
 
 
+OVERVIEW_CELL_HEIGHT = 150
+OVERVIEW_COLUMNS = 5
+OVERVIEW_NAME_RE = re.compile(rf"^({'|'.join(CATEGORIES)})_(\d+)_([a-z]+)\.jpg$")
+
+
+def overview_order(paths: list[Path]) -> list[Path]:
+    """Sort dataset images by category (CATEGORIES order), then person, then number."""
+
+    def key(path: Path) -> tuple[int, str, int]:
+        match = OVERVIEW_NAME_RE.match(path.name)
+        if match is None:
+            return (len(CATEGORIES), path.name, 0)
+        return (CATEGORIES.index(match[1]), match[3], int(match[2]))
+
+    return sorted(paths, key=key)
+
+
+def write_overview(root: Path) -> Path:
+    """Write results/figures/dataset_overview.png: every data/images/*.jpg with its file name.
+
+    Thumbnails are cell_height=150 px, five per row, laid out with viz.comparison_grid.
+    Raises DatasetError if there are no images.
+    """
+    from seamcarving.viz import comparison_grid  # only needed for this mode
+
+    paths = overview_order(list((root / "data" / "images").glob("*.jpg")))
+    if not paths:
+        raise DatasetError([f"no images in {root / 'data' / 'images'}"], wrote_nothing=True)
+    images = [read_image(path) for path in paths]
+    grid = comparison_grid(
+        images,
+        [path.stem for path in paths],
+        cols=OVERVIEW_COLUMNS,
+        cell_height=OVERVIEW_CELL_HEIGHT,
+    )
+    out = root / "results" / "figures" / "dataset_overview.png"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    ok, buf = cv2.imencode(".png", grid)
+    if not ok:
+        raise DatasetError([f"cannot encode {out}"], wrote_nothing=True)
+    buf.tofile(str(out))
+    return out
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Command-line parser."""
     parser = argparse.ArgumentParser(
         description="Resize raw photos to a long side of 800 px, strip EXIF and update metadata."
     )
-    parser.add_argument("--person", required=True, help="your name, lowercase ASCII, e.g. furkan")
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--person", help="your name, lowercase ASCII, e.g. furkan")
+    mode.add_argument(
+        "--overview",
+        action="store_true",
+        help="write results/figures/dataset_overview.png from data/images and exit",
+    )
     parser.add_argument(
         "--root", type=Path, default=None, help="repository root (default: parent of tools/)"
     )
@@ -403,6 +453,14 @@ def main(argv: list[str] | None = None) -> int:
     """Entry point; returns 0 on success, 1 on dataset problems, 2 on bad arguments."""
     args = build_parser().parse_args(argv)
     root = (args.root or default_root()).resolve()
+    if args.overview:
+        try:
+            out = write_overview(root)
+        except DatasetError as exc:
+            print(f"error: {exc.problems[0]}", file=sys.stderr)
+            return 1
+        print(f"Wrote {out}")
+        return 0
     err = person_error(args.person)
     if err:
         print(f"error: {err}", file=sys.stderr)

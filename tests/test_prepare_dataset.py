@@ -239,3 +239,26 @@ def test_output_has_no_exif_and_exif_orientation_applied(tmp_path: Path) -> None
     assert b"Exif" not in data
     assert b"TestCam" not in data
     assert cv2.imread(str(out_path)).shape[:2] == (80, 60)  # upright: portrait after rotation
+
+
+def test_overview_orders_by_category_then_person(tmp_path: Path) -> None:
+    images = tmp_path / "data" / "images"
+    images.mkdir(parents=True)
+    names = ["yogun_01_emre", "manzara_02_ahsen", "manzara_01_furkan", "nesne_01_ahsen"]
+    for i, name in enumerate(names):
+        cv2.imwrite(str(images / f"{name}.jpg"), make_image(30, 40 + 10 * i, seed=i))
+    ordered = [p.stem for p in prep.overview_order(list(images.glob("*.jpg")))]
+    assert ordered == ["manzara_02_ahsen", "manzara_01_furkan", "nesne_01_ahsen", "yogun_01_emre"]
+    assert prep.main(["--overview", "--root", str(tmp_path)]) == 0
+    out = cv2.imread(str(tmp_path / "results" / "figures" / "dataset_overview.png"))
+    assert out is not None and out.dtype == np.uint8 and out.ndim == 3
+
+
+def test_overview_without_images_fails(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    assert prep.main(["--overview", "--root", str(tmp_path)]) == 1
+    assert "no images" in capsys.readouterr().err
+
+
+def test_person_and_overview_are_exclusive(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit):
+        prep.main(["--person", "furkan", "--overview", "--root", str(tmp_path)])
