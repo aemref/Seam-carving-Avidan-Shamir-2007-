@@ -6,15 +6,27 @@ derived from the energy map itself instead of being fixed constants, so their do
 the ordinary energies holds for any energy scale.
 """
 
+import operator
+import warnings
 from typing import NamedTuple
 
+import cv2
 import numpy as np
 
+from seamcarving import carve, energy, enlarge
 from seamcarving.types import EnergyFn, SeamFn
 
 # Lower bound for the weight scale, so the weights stay strictly positive on a flat (all-zero)
 # energy map.
 MIN_WEIGHT_SCALE = 1.0
+
+DIRECTIONS = ("auto", "vertical", "horizontal")
+
+# Per seam direction: the image axis that loses one pixel per seam, and the carve/enlarge
+# functions working along it.
+_SEAM_AXIS = {"vertical": 1, "horizontal": 0}
+_SHRINKERS = {"vertical": carve.shrink_width, "horizontal": carve.shrink_height}
+_ENLARGERS = {"vertical": enlarge.enlarge_width, "horizontal": enlarge.enlarge_height}
 
 
 class RemovalResult(NamedTuple):
@@ -23,6 +35,17 @@ class RemovalResult(NamedTuple):
     image: np.ndarray
     n_seams: int
     direction: str  # "vertical" | "horizontal"
+
+
+class UnreachablePixelsWarning(UserWarning):
+    """Removal pixels that no seam can reach without crossing the protection mask were kept."""
+
+    def __init__(self, pixels_left: int) -> None:
+        super().__init__(
+            f"{pixels_left} removal pixels cannot be reached without crossing the protection "
+            "mask; they are left in the image"
+        )
+        self.pixels_left = pixels_left
 
 
 def apply_mask_weights(
@@ -85,7 +108,7 @@ def _validated_mask(mask: np.ndarray, expected_shape: tuple[int, ...]) -> np.nda
     """Return `mask` as a bool array; raise ValueError if its shape is not `expected_shape`."""
     mask = np.asarray(mask, dtype=bool)
     if mask.shape != expected_shape:
-        raise ValueError(f"mask shape {mask.shape} does not match energy shape {expected_shape}")
+        raise ValueError(f"mask shape {mask.shape} does not match expected shape {expected_shape}")
     return mask
 
 
@@ -110,15 +133,141 @@ def remove_object(
     energy_fn: EnergyFn | None = None,
     seam_fn: SeamFn | None = None,
 ) -> RemovalResult:
-    """Remove the object under `remove_mask` from an (H, W, 3) image by carving seams.
+    """Remove the object under `remove_mask` by carving seams until no removal pixel is left.
 
-    Intended behaviour (implemented in a later wave): optionally dilate the removal mask by
-    `dilate` pixels and drop the pixels it shares with `protect_mask` from it, pick the
-    direction needing fewer seams when `direction` is "auto" (see `seams_needed`), then
-    repeatedly compute the energy as energy_fn(img, carry) with
-    carry = (remove_mask, protect_mask), weight it with `apply_mask_weights`, find a seam
-    with seam_fn(energy) and remove it, carving the masks along with the image until no
-    removal pixel is left. With `restore_size`, seam insertion enlarges the
-    result back to the original size. Returns the image, the seam count and the direction.
+    The removal mask is first grown by `dilate` pixels (to catch shadows and edge halos), then
+    pixels it shares with `protect_mask` are dropped from it (protection wins). Seams are
+    removed one at a time; each step computes energy_fn(img, carry) with
+    carry = (remove_mask, protect_mask) carved along with the image, weights it with
+    `apply_mask_weights` and finds the seam with seam_fn. Like any seam carving, this changes
+    the whole image, not only the masked region (paper section 4.6).
+
+    Removal pixels that no seam can reach without crossing the protection mask (for example
+    pixels directly above a wide protected region) are kept, protection wins: as soon as a
+    seam would remove no removal pixel, carving stops with UnreachablePixelsWarning, whose
+    `pixels_left` attribute holds their number.
+
+    Args:
+        img: (H, W) or (H, W, C) image (not modified).
+        remove_mask: (H, W) bool, pixels to remove.
+        protect_mask: (H, W) bool or None, pixels to keep.
+        restore_size: afterwards insert as many seams as were removed (paper Fig. 12), so the
+            output has the input's size. The insertion ignores `protect_mask`.
+        direction: "vertical", "horizontal" or "auto": the one needing fewer seams according
+            to `seams_needed`, vertical on a tie.
+        dilate: grow the removal mask by this many pixels first (square max filter, so
+            diagonal neighbours are included); 0 keeps it.
+        energy_fn: base energy (img, carry) -> (H, W); None means `compute_energy(img)`.
+        seam_fn: vertical seam finder; None means `find_vertical_seam`.
+
+    Returns:
+        RemovalResult(image, n_seams, direction): image is (H, W - n_seams[, C]) for vertical
+        seams, (H - n_seams, W[, C]) for horizontal ones, or (H, W[, C]) with `restore_size`.
+
+    Raises:
+        ValueError: bad image or mask shape, unknown direction or negative `dilate`.
+        RuntimeError: the mask is still not cleared after W - 1 (or H - 1) seams.
+
+    Warns:
+        UnreachablePixelsWarning: removal pixels were kept because of the protection mask.
     """
-    raise NotImplementedError("remove_object is scheduled for a later wave")
+    img = _validated_image(img)
+    remove, protect = _prepared_masks(remove_mask, protect_mask, img.shape[:2], dilate)
+    chosen = _resolved_direction(direction, remove)
+    carved = _carve_until_cleared(img, (remove, protect), chosen, _mask_weighted(energy_fn), seam_fn)
+    seam_axis = _SEAM_AXIS[chosen]
+    n_seams = img.shape[seam_axis] - carved.shape[seam_axis]
+    if restore_size and n_seams > 0:
+        carved = _ENLARGERS[chosen](carved, n_seams, energy_fn=energy_fn, seam_fn=seam_fn)
+    return RemovalResult(carved, n_seams, chosen)
+
+
+def _validated_image(img: np.ndarray) -> np.ndarray:
+    img = np.asarray(img)
+    if img.ndim not in (2, 3):
+        raise ValueError(f"img must have shape (H, W) or (H, W, C), got {img.shape}")
+    return img
+
+
+def _prepared_masks(
+    remove_mask: np.ndarray,
+    protect_mask: np.ndarray | None,
+    image_shape: tuple[int, ...],
+    dilate: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return (remove, protect) bool masks: remove dilated, minus protect; protect never None."""
+    remove = _dilated(_validated_mask(remove_mask, image_shape), dilate)
+    if protect_mask is None:
+        protect = np.zeros(image_shape, dtype=bool)
+    else:
+        protect = _validated_mask(protect_mask, image_shape)
+    return remove & ~protect, protect
+
+
+def _dilated(mask: np.ndarray, radius: int) -> np.ndarray:
+    """Return `mask` grown by `radius` pixels in every direction, diagonals included.
+
+    This is a max filter over a (2 * radius + 1) square window. Raises ValueError if radius < 0.
+    """
+    radius = operator.index(radius)
+    if radius < 0:
+        raise ValueError(f"dilate must be >= 0, got {radius}")
+    if radius == 0:
+        return mask
+    kernel = np.ones((2 * radius + 1, 2 * radius + 1), dtype=np.uint8)
+    return cv2.dilate(mask.astype(np.uint8), kernel) > 0
+
+
+def _resolved_direction(direction: str, remove_mask: np.ndarray) -> str:
+    """Return "vertical" or "horizontal"; "auto" picks the one needing fewer seams."""
+    if direction not in DIRECTIONS:
+        raise ValueError(f"direction must be one of {DIRECTIONS}, got {direction!r}")
+    if direction != "auto":
+        return direction
+    n_vertical, n_horizontal = seams_needed(remove_mask)
+    return "horizontal" if n_horizontal < n_vertical else "vertical"
+
+
+def _mask_weighted(base: EnergyFn | None) -> EnergyFn:
+    """Wrap `base` so the masks in carry = (remove, protect) weight its energy.
+
+    shrink_height calls the wrapper with the transposed image and transposed carry, so the
+    masks always match the image they come with.
+    """
+
+    def weighted_energy(img: np.ndarray, carry: tuple) -> np.ndarray:
+        base_energy = energy.compute_energy(img) if base is None else base(img, carry)
+        return apply_mask_weights(base_energy, carry[0], carry[1])
+
+    return weighted_energy
+
+
+def _carve_until_cleared(
+    img: np.ndarray, masks: tuple, direction: str, energy_fn: EnergyFn, seam_fn: SeamFn | None
+) -> np.ndarray:
+    """Remove one seam at a time until masks[0] (the removal mask) is empty; return the image.
+
+    A seam that removes no removal pixel means the pixels left cannot be reached without
+    crossing the protection mask (the weights guarantee this for the optimal seam). That seam
+    is discarded and the loop stops with UnreachablePixelsWarning; otherwise it would keep
+    carving the whole image and, once it is narrow enough, cut protected pixels. Stops with
+    RuntimeError after the last seam the image can lose (W - 1 or H - 1).
+    """
+    shrink = _SHRINKERS[direction]
+    max_seams = img.shape[_SEAM_AXIS[direction]] - 1
+    carved, carry = img.copy(), masks
+    for _ in range(max_seams):
+        pixels_left = np.count_nonzero(carry[0])
+        if pixels_left == 0:
+            return carved
+        result = shrink(carved, 1, energy_fn=energy_fn, seam_fn=seam_fn, carry=carry)
+        if np.count_nonzero(result.carry[0]) == pixels_left:
+            warnings.warn(UnreachablePixelsWarning(pixels_left), stacklevel=3)
+            return carved
+        carved, carry = result.image, result.carry
+    if carry[0].any():
+        raise RuntimeError(
+            f"{np.count_nonzero(carry[0])} removal pixels are left after {max_seams} "
+            f"{direction} seams"
+        )
+    return carved

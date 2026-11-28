@@ -1,0 +1,9 @@
+image,noise,case,iou_with_clean
+manzara_01_ahsen,gauss,clean,1.0000
+manzara_01_ahsen,gauss,noisy,0.2488
+manzara_01_ahsen,gauss,noisy + gauss 1.5,0.2927
+manzara_01_ahsen,gauss,noisy + median 3,0.2623
+manzara_01_ahsen,saltpepper,clean,1.0000
+manzara_01_ahsen,saltpepper,noisy,0.2310
+manzara_01_ahsen,saltpepper,noisy + gauss 1.5,0.2011
+manzara_01_ahsen,saltpepper,noisy + median 3,0.5013
