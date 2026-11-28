@@ -1,0 +1,11 @@
+photo,category,width,height,seams_removed,seconds,protect_px,protect_removed_plain,protect_removed_masked,seconds_masked
+insan_01_ahsen,insan,800,557,240,6.659,55103,16759,0,7.051
+insan_01_berkay,insan,800,600,240,7.068,92269,38834,0,7.649
+insan_01_emre,insan,800,600,240,6.844,99952,51570,0,7.095
+insan_01_mirza,insan,600,800,180,5.445,46447,16396,0,5.734
+mimari_01_ahsen,mimari,800,600,240,6.889,,,,
+mimari_01_berkay,mimari,600,800,180,5.4,,,,
+mimari_01_furkan,mimari,800,600,240,6.808,,,,
+mimari_01_mirza,mimari,800,600,240,7.08,,,,
+yogun_01_emre,yogun,800,600,240,6.909,,,,
+yogun_01_furkan,yogun,800,600,240,6.982,,,,

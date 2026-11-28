@@ -15,6 +15,7 @@ Run: ``python -m experiments.d7_limits``
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import numpy as np
@@ -27,6 +28,20 @@ from seamcarving.object_removal import apply_mask_weights
 CATEGORIES = ("insan", "mimari", "yogun")
 SHRINK = 0.30  # width -30%
 SEAM_COLOR = (0, 0, 255)  # BGR red
+
+
+TABLE_HEADER = [
+    "photo",
+    "category",
+    "width",
+    "height",
+    "seams_removed",
+    "seconds",
+    "protect_px",
+    "protect_removed_plain",
+    "protect_removed_masked",
+    "seconds_masked",
+]
 
 
 def _size(img: np.ndarray) -> str:
@@ -63,15 +78,18 @@ def _load_protect(path: Path, shape: tuple[int, int]) -> np.ndarray | None:
     return mask
 
 
-def run_photo(path: Path) -> None:
-    """Produce the D7 figures for one photo."""
+def run_photo(path: Path) -> tuple:
+    """Produce the D7 figures for one photo and return its row for d7_limits.csv."""
     name = path.stem
     img = common.load_image(path)
     h, w = img.shape[:2]
     k = round(SHRINK * w)
     print(f"D7: {name} ({w}x{h}), -{k} cols (-30%)")
 
+    t0 = time.perf_counter()
     res = carve.shrink_width(img, k)
+    seconds = time.perf_counter() - t0
+    protect_px = removed_plain = removed_masked = seconds_masked = ""
     scaled = baselines.scale(img, h, w - k)
     images = [img, res.image, scaled]
     labels = [
@@ -86,35 +104,54 @@ def run_photo(path: Path) -> None:
     if protect is None:
         print("  no usable protect mask; 3 panels.")
     else:
+        t0 = time.perf_counter()
         res_p = carve.shrink_width(img, k, energy_fn=protected_energy, carry=(protect,))
+        seconds_masked = round(time.perf_counter() - t0, 3)
         images.append(res_p.image)
         labels.append(f"seam carving + protect mask -30% {_size(res_p.image)}")
         seam_images.append(viz.draw_seams(img, res_p.removed, color=SEAM_COLOR))
         seam_labels.append(f"{k} removed seams, protect mask {_size(img)}")
-        hit = int(np.count_nonzero(res_p.removed & protect))
+        protect_px = int(np.count_nonzero(protect))
+        removed_masked = int(np.count_nonzero(res_p.removed & protect))
+        removed_plain = int(np.count_nonzero(res.removed & protect))
         print(
-            f"  protected pixels removed: {hit} (seam carving without mask: "
-            f"{int(np.count_nonzero(res.removed & protect))})"
+            f"  protected pixels removed: {removed_masked} of {protect_px} "
+            f"(seam carving without mask: {removed_plain})"
         )
 
     common.save_figure(f"d7_limits_{name}", viz.comparison_grid(images, labels, cols=len(images)))
     common.save_figure(
         f"d7_seams_{name}", viz.comparison_grid(seam_images, seam_labels, cols=len(seam_images))
     )
+    category = name.split("_")[0]
+    return (
+        name,
+        category,
+        w,
+        h,
+        k,
+        round(seconds, 3),
+        protect_px,
+        removed_plain,
+        removed_masked,
+        seconds_masked,
+    )
 
 
 def main() -> None:
     """Run D7 on every insan, mimari and yogun photo; skip categories without photos."""
-    done = 0
+    rows = []
     for category in CATEGORIES:
         paths = _photos(category)
         if not paths:
             print(f"D7: no '{category}' photos in {common.IMAGES_DIR}; skipping this category.")
             continue
         for path in paths:
-            run_photo(path)
-            done += 1
-    print(f"D7: processed {done} photo(s).")
+            rows.append(run_photo(path))
+    if rows:
+        out = common.save_table("d7_limits", rows, TABLE_HEADER)
+        print(f"D7: wrote {out}")
+    print(f"D7: processed {len(rows)} photo(s).")
 
 
 if __name__ == "__main__":
